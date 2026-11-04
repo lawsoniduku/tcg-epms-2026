@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+*.sqlite*
+.env*
+!.env.example
+coverage/
+.sites-local/
+*.tar.gz
+upload/
