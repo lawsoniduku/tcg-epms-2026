@@ -1,0 +1,124 @@
+import {initialiseEvidence,listEvidence,uploadEvidence,downloadEvidence,scanQueue,scanReceipt} from './evidence.mjs';
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {resolve,extname} from 'node:path';
+import {randomBytes,randomUUID,timingSafeEqual,verify} from 'node:crypto';
+import {digest,matches,passwordHash} from './platform-db.mjs';
+import {execute,view,exportData,processDeadlines} from '../public/workspace/engine.mjs';
+import {need,requireThat,roles} from '../public/workspace/model.mjs';
+
+const root=resolve(new URL('../public/',import.meta.url).pathname);
+const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml'};
+const equals=(a,b)=>typeof a==='string'&&typeof b==='string'&&Buffer.byteLength(a)===Buffer.byteLength(b)&&timingSafeEqual(Buffer.from(a),Buffer.from(b));
+async function body(req,max=512000){
+  requireThat(req.headers['content-type']?.split(';')[0]==='application/json','Send JSON.',415);
+  const parts=[];let length=0;for await(const part of req){length+=part.length;requireThat(length<=max,'Request exceeds the permitted size.',413);parts.push(part);}
+  let value;try{value=JSON.parse(Buffer.concat(parts));}catch{requireThat(false,'Invalid JSON.',400);}
+  need(value&&typeof value==='object'&&!Array.isArray(value),'Send a JSON object.');return value;
+}
+function assertSSO(token,opts){
+  requireThat(opts.ssoKey&&opts.ssoIssuer&&opts.ssoAudience,'SSO is unavailable.',403);
+  const [head,payload,sig,...extra]=String(token).split('.');requireThat(!extra.length&&sig,'Invalid SSO assertion.',401);
+  const header=JSON.parse(Buffer.from(head,'base64url')),claims=JSON.parse(Buffer.from(payload,'base64url')),now=Date.now()/1000;
+  requireThat(header.alg==='RS256'&&verify('RSA-SHA256',Buffer.from(head+'.'+payload),opts.ssoKey,Buffer.from(sig,'base64url')),'Invalid assertion signature.',401);
+  requireThat(claims.iss===opts.ssoIssuer&&claims.aud===opts.ssoAudience&&claims.exp>=now&&claims.exp<=now+300&&claims.iat<=now+30&&claims.iat>=now-300&&(!claims.nbf||claims.nbf<=now)&&typeof claims.sub==='string'&&typeof claims.jti==='string','Invalid assertion claims.',401);
+  return claims;
+}
+export function platformHttp(store,opts={}){
+  const {db}=store;initialiseEvidence(db);
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
+    res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    const send=(status,data,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8',...headers});res.end(JSON.stringify(data));};
+    try{
+      const url=new URL(req.url,'http://localhost'),path=url.pathname,post=req.method==='POST';
+      if(!path.startsWith('/api/')){
+        requireThat(['GET','HEAD'].includes(req.method),'Method unavailable.',405);
+        const file=resolve(root,'.'+decodeURIComponent(path==='/'?'/index.html':path));requireThat(file.startsWith(root+'/')&&types[extname(file)],'Page unavailable.',404);
+        let bytes;try{bytes=await readFile(file);}catch{requireThat(false,'Page unavailable.',404);}
+        res.writeHead(200,{'Content-Type':types[extname(file)]+'; charset=utf-8'});return res.end(req.method==='HEAD'?undefined:bytes);
+      }
+      if(post&&req.headers.origin){requireThat(opts.origin?req.headers.origin===opts.origin:new URL(req.headers.origin).host===req.headers.host,'Cross-origin request denied.',403);}
+      if(path==='/api/health')return send(200,{ok:true,schema:2});
+      if(path==='/api/platform/info')return send(200,{mode:opts.demo?'sandbox':'live',ssoUrl:opts.ssoUrl??null,evidence:true,users:opts.demo?store.profiles().map(({id,name,role})=>({id,name,role})):[]});
+      const cookie=(req.headers.cookie??'').split(';').map(c=>c.trim()).find(c=>c.startsWith('pms_session='))?.slice(12);
+      const session=cookie?db.prepare('SELECT * FROM sessions WHERE token=? AND expires>?').get(digest(cookie),Date.now()):null;
+      const getAccount=id=>db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
+      const newSession=actor=>{
+        requireThat(actor?.active===true,'Account is inactive.',401);if(session)db.prepare('DELETE FROM sessions WHERE token=?').run(session.token);
+        const valid=store.session(actor.id,actor.role);store.audit(actor.id,'sign-in');return send(200,{csrf:valid.csrf},{'Set-Cookie':'pms_session='+valid.token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800'+(opts.secure?'; Secure':'')});
+      };
+      if(post&&['/api/platform/login','/api/platform/sso'].includes(path)){
+        const b=await body(req),bucket=digest(req.socket.remoteAddress+'|'+path),now=Date.now();
+        const count=db.prepare('SELECT * FROM auth_limits WHERE bucket=?').get(bucket);requireThat(!count||count.expires<=now||count.count<40,'Try signing in again in a minute.',429);
+        db.prepare('INSERT OR REPLACE INTO auth_limits VALUES(?,?,?)').run(bucket,count&&count.expires>now?count.count+1:1,count&&count.expires>now?count.expires:now+60000);
+        if(path.endsWith('/sso')){
+          const claims=assertSSO(b.assertion,opts);const user=db.prepare('SELECT * FROM accounts WHERE subject=?').get(claims.sub);requireThat(user,'Account has not been provisioned.',403);
+          const replay=digest('sso:'+claims.jti);requireThat(!db.prepare('SELECT 1 FROM auth_limits WHERE bucket=? AND expires>?').get(replay,now),'Assertion already used.',401);db.prepare('INSERT OR REPLACE INTO auth_limits VALUES(?,1,?)').run(replay,claims.exp*1000);
+          return newSession(store.open(user.profile));
+        }
+        const user=opts.demo?getAccount(String(b.userId)):db.prepare('SELECT * FROM accounts WHERE email=?').get(String(b.email??'').trim());
+        requireThat(user&&(opts.demo||matches(b.password,user.password)),'Sign-in details were not accepted.',401);
+        return newSession(store.open(user.profile));
+      }
+      if(path.startsWith('/api/integration/')){
+        const token=req.headers.authorization?.replace(/^Bearer /,'');
+        if(path.startsWith('/api/integration/scanner/')){
+          requireThat(opts.scanToken&&equals(token,opts.scanToken),'Invalid scanner credential.',401);
+          if(req.method==='GET'&&path.endsWith('/queue'))return send(200,{files:scanQueue(store)});
+          if(post&&path.endsWith('/receipt'))return send(200,scanReceipt(store,await body(req)));
+          requireThat(false,'Scanner route unavailable.',404);
+        }
+        if(post&&path==='/api/integration/roster'){
+          requireThat(opts.rosterToken&&equals(token,opts.rosterToken),'Invalid roster credential.',401);
+          const b=await body(req),actor={id:'integration-hris',name:'HRIS integration',role:'pm',active:true};
+          return send(200,store.command(actor.id,b.requestId,b,s=>execute(s,actor,{type:'employee',action:'employee.import',values:{csv:b.csv}})));
+        }
+        requireThat(opts.noticeToken&&equals(token,opts.noticeToken),'Invalid notification credential.',401);
+        if(req.method==='GET'&&path.endsWith('/outbox'))return send(200,{messages:store.load().outbox.filter(n=>n.status!=='delivered').slice(0,100)});
+        if(post&&path.endsWith('/outbox/ack')){const b=await body(req);store.change(s=>{const m=s.outbox.find(m=>m.id===b.id);need(m,'Unknown message.');if(m.status!=='delivered'){m.attempts++;m.status=b.delivered===true?'delivered':'pending';}});return send(200,{ok:true});}
+        requireThat(false,'Integration route unavailable.',404);
+      }
+      requireThat(session,'Sign in to continue.',401);
+      const account=getAccount(session.actor);requireThat(account,'Account unavailable.',401);const profile=store.open(account.profile);
+      const grantedRoles=[...new Set([profile.role,...(profile.additionalRoles??[])])];
+      const actor={...profile,role:session.active_role??profile.role,grantedRoles};
+      requireThat(grantedRoles.includes(actor.role),'Role access was revoked.',403);
+      requireThat(actor.active,'Account inactive.',401);
+      if(post)requireThat(equals(req.headers['x-csrf-token'],session.csrf),'Invalid session request token.',403);
+      if(path==='/api/platform/files'){
+        if(post)return send(201,uploadEvidence(store,actor,await body(req,2900000)));
+        if(req.method==='GET'&&url.searchParams.has('download')){
+          const file=downloadEvidence(store,actor,url.searchParams.get('download'));
+          res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="'+file.name+'"'});return res.end(file.bytes);
+        }
+        if(req.method==='GET')return send(200,{files:listEvidence(store,actor,url.searchParams.get('entity'))});
+      }
+      if(post&&path==='/api/platform/role'){const b=await body(req);requireThat(grantedRoles.includes(b.role),'Role unavailable.',403);return newSession({...profile,role:b.role});}
+      if(req.method==='GET'&&path==='/api/platform/view'){const result=view(store.load(),actor,{id:url.searchParams.get('id')});store.audit(actor.id,'view',url.searchParams.get('id')??'overview');return send(200,{...result,csrf:session.csrf});}
+      if(post&&path==='/api/platform/command'){const b=await body(req);return send(200,store.command(actor.id,b.requestId,b,s=>execute(s,actor,b)));}
+      if(req.method==='GET'&&path==='/api/platform/export'){const report=url.searchParams.get('report');const out=exportData(store.load(),actor,report,url.searchParams.get('id'));store.audit(actor.id,'export.'+report);res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="performance-export.csv"'});return res.end(out);}
+      if(post&&path==='/api/platform/logout'){db.prepare('DELETE FROM sessions WHERE token=?').run(session.token);return send(200,{ok:true},{'Set-Cookie':'pms_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});}
+      if(path==='/api/platform/accounts'){
+        requireThat(actor.role==='admin'&&!opts.demo,'Account administration requires a live administrator.',403);
+        if(req.method==='GET')return send(200,{users:store.profiles(),employees:store.load().records.filter(r=>r.type==='employee').map(({id,title})=>({id,title})),roles});
+        if(post){
+          const b=await body(req);if(b.disable){need(b.disable!==actor.id,'Use another administrator to deactivate this account.');const row=getAccount(b.disable);need(row,'Unknown account.');const profile=store.open(row.profile);profile.active=false;store.transaction(()=>{db.prepare('UPDATE accounts SET profile=? WHERE id=?').run(store.seal(profile),profile.id);db.prepare('DELETE FROM sessions WHERE actor=?').run(profile.id);store.audit(actor.id,'account.disable',profile.id);});return send(200,{ok:true});}
+          if(b.employeeId){need(store.load().records.some(e=>e.type==='employee'&&e.id===b.employeeId),'Select an existing employee.');need(!store.profiles().some(u=>u.employeeId===b.employeeId&&u.active),'This employee already has an account.');}
+          need(b.password||b.subject,'Supply a local password or an SSO subject.');
+          const additionalRoles=b.additionalRoles??[];need(Array.isArray(additionalRoles)&&additionalRoles.every(role=>Object.hasOwn(roles,role)),'Invalid additional role.');
+          need(!actor.company||actor.company===b.company,'Provision users inside your company scope.');
+          const id=randomUUID();store.account({id,name:b.name,role:b.role,additionalRoles,email:b.email,department:b.department,company:b.company||'',employeeId:b.employeeId||null},{password:b.password,subject:b.subject||null});store.audit(actor.id,'account.create',id);return send(201,{id});
+        }
+      }
+      if(post&&path==='/api/platform/password'){const b=await body(req);requireThat(matches(b.current,account.password),'Current password is incorrect.',403);const hash=passwordHash(b.password);store.transaction(()=>{db.prepare('UPDATE accounts SET password=? WHERE id=?').run(hash,actor.id);db.prepare('DELETE FROM sessions WHERE actor=?').run(actor.id);});return send(200,{ok:true});}
+      requireThat(false,'Route unavailable.',404);
+    }catch(error){
+      const conflict=error.code==='ERR_SQLITE_ERROR'&&String(error.message).includes('UNIQUE constraint');
+      if(!error.status&&!conflict)console.error('PMS request failed:',error.name);
+      send(error.status??(conflict?409:500),{error:error.status?error.message:conflict?'A record with that identifier already exists.':'The request could not be completed.'});
+    }
+  });
+  return server;
+}
+
