@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {randomBytes,randomUUID,generateKeyPairSync,sign} from 'node:crypto';
+import {openPlatform} from '../server/platform-db.mjs';
+import {platformHttp} from '../server/platform-http.mjs';
+import {execute,view} from '../public/workspace/engine.mjs';
+const pwd='Acceptance-password-0001';
+async function fixture(t,{demo=false,opts={}}={}){
+ const dir=mkdtempSync(join(tmpdir(),'pms-install-')),key=randomBytes(32),file=join(dir,'deploy.sqlite');const store=openPlatform(file,{key,demo});
+ if(!demo)store.account({id:'first',name:'Initial administrator',role:'admin',email:'admin@example.invalid',department:'IT'},{password:pwd});
+ const server=platformHttp(store,{demo,...opts});await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
+ const base='http://127.0.0.1:'+server.address().port;
+ const post=async(path,b,session={})=>fetch(base+'/api/platform/'+path,{method:'POST',headers:{'Content-Type':'application/json',...(session.cookie?{cookie:session.cookie,'x-csrf-token':session.csrf}:{} )},body:JSON.stringify(b)});
+ const login=async(b)=>{const r=await post('login',b);assert.equal(r.status,200);return {cookie:r.headers.get('set-cookie').split(';')[0],...(await r.json())};};
+ t.after(async()=>{await new Promise(ok=>server.close(ok));store.close();rmSync(dir,{recursive:true,force:true});});
+ return {dir,key,file,store,base,post,login};
+}
+test('empty installation provisions real accounts and roster via authenticated HTTP, with durable encrypted backup/restore',async t=>{
+ const f=await fixture(t);const info=await (await fetch(f.base+'/api/platform/info')).json();assert.equal(info.mode,'live');assert.equal(info.users.length,0);
+ const admin=await f.login({email:'admin@example.invalid',password:pwd});
+ const add=async(role,email)=>{const response=await f.post('accounts',{name:role,role,department:'Operations',email,password:pwd},admin);assert.equal(response.status,201);return (await response.json()).id;};
+ const mgr=await add('manager','manager@example.invalid');await add('pm','pm@example.invalid');
+ const pm=await f.login({email:'pm@example.invalid',password:pwd});const command={requestId:randomUUID(),type:'employee',action:'employee.new',values:{staffId:'LIVE-A',name:'Test install person',email:'person@example.invalid',company:'TCG',department:'Operations',jobTitle:'Analyst',managerId:mgr,confirmed:'Yes',commercial:'No',peopleManager:'No',joinedAt:'2026-01-02'}};
+ const saved=await f.post('command',command,pm);assert.equal(saved.status,200);const result=await saved.json();
+ const replay=await f.post('command',command,pm);assert.deepEqual(await replay.json(),result);
+ assert.equal((await f.post('command',{...command,values:{...command.values,name:'Changed'}},pm)).status,422);
+ const state=await (await fetch(f.base+'/api/platform/view',{headers:{cookie:pm.cookie}})).json();assert.equal(state.rows.employee.length,1);
+ assert.equal((await f.post('accounts',{disable:'first'},pm)).status,403);
+ const bad=await f.post('command',{...command,requestId:randomUUID()},{...pm,csrf:'forged'});assert.equal(bad.status,403);
+ const backup=join(f.dir,'restored.sqlite');f.store.db.prepare('VACUUM INTO ?').run(backup);
+ assert.equal(readFileSync(backup).includes(Buffer.from('Test install person')),false);
+ const restored=openPlatform(backup,{key:f.key});try{assert.equal(restored.load().records[0].title,'Test install person');assert.equal(restored.load().events.length,1);}finally{restored.close();}
+ assert.throws(()=>f.store.db.exec('DELETE FROM snapshots'),/Immutable/);
+});
+test('stale edits, out-of-scope actions and protected 360 identities are denied through the service',async t=>{
+ const f=await fixture(t,{demo:true});const pm=await f.login({userId:'pm'}),employee=await f.login({userId:'employee'});const s=f.store.load(),r=s.records.find(x=>x.type==='review'&&x.status==='Goal setting');
+ const cmd={requestId:randomUUID(),id:r.id,type:'review',version:999,action:'review.submitGoals',values:{}};
+ assert.equal((await f.post('command',cmd,employee)).status,409);
+ assert.equal((await f.post('command',{...cmd,requestId:randomUUID(),action:'review.lock'},employee)).status,403);
+ const unauth=await fetch(f.base+'/api/platform/view');assert.equal(unauth.status,401);
+ assert.equal((await fetch(f.base+'/api/platform/export?report=scores',{headers:{cookie:employee.cookie}})).status,403);
+ assert.equal((await fetch(f.base+'/api/platform/export?report=scores',{headers:{cookie:pm.cookie}})).status,200);
+ assert.equal((await f.post('logout',{},employee)).status,200);assert.equal((await fetch(f.base+'/api/platform/view',{headers:{cookie:employee.cookie}})).status,401);
+});
+test('SSO accepts a signed scoped assertion once and rejects replay and an untrusted issuer',async t=>{
+ const keys=generateKeyPairSync('rsa',{modulusLength:2048}),f=await fixture(t,{opts:{ssoKey:keys.publicKey,ssoIssuer:'corporate-idp',ssoAudience:'tcg-pms'}});
+ f.store.account({id:'sso-user',name:'SSO employee',role:'employee',email:'sso@example.invalid',department:'Operations'},{subject:'external-123'});
+ const jwt=(issuer,jti)=>{const now=Math.floor(Date.now()/1000),unsigned=Buffer.from(JSON.stringify({alg:'RS256'})).toString('base64url')+'.'+Buffer.from(JSON.stringify({iss:issuer,aud:'tcg-pms',sub:'external-123',iat:now,exp:now+60,jti})).toString('base64url');return unsigned+'.'+sign('RSA-SHA256',Buffer.from(unsigned),keys.privateKey).toString('base64url');};
+ const assertion=jwt('corporate-idp',randomUUID());assert.equal((await f.post('sso',{assertion})).status,200);
+ assert.equal((await f.post('sso',{assertion})).status,401);assert.equal((await f.post('sso',{assertion:jwt('other-idp',randomUUID())})).status,401);
+});
+test('cross-company actor cannot read, import or mutate another company’s employee',async t=>{
+ const f=await fixture(t,{demo:true});const s=f.store.load(),actor={id:'scoped',name:'PM',role:'pm',company:'Other company',active:true};const e=s.records.find(r=>r.type==='employee');
+ assert.throws(()=>view(s,actor,{id:e.id}),/scope/);
+ assert.throws(()=>execute(s,actor,{type:'employee',action:'employee.new',values:{staffId:e.staffId,name:'Attempt',company:'Other company',department:'Operations',email:e.email,jobTitle:e.jobTitle,managerId:'manager',confirmed:'Yes',commercial:'No',peopleManager:'No',joinedAt:e.joinedAt}}),/scope/);
+});
+
+test('evidence uploads remain encrypted and quarantined until a scanner attests to the same digest',async t=>{
+ const f=await fixture(t,{demo:true,opts:{scanToken:'test-scanner-secret'}}),pm=await f.login({userId:'pm'}),employee=await f.login({userId:'employee'});
+ const review=f.store.load().records.find(r=>r.type==='review'&&r.status==='Goal setting');const bytes=Buffer.from('Synthetic test evidence.');
+ const put=await f.post('files',{entity:review.id,name:'evidence.txt',base64:bytes.toString('base64'),visibility:'Internal'},pm);assert.equal(put.status,201);const file=await put.json();
+ const read=who=>fetch(f.base+'/api/platform/files?download='+file.id,{headers:{cookie:who.cookie}});
+ assert.equal((await read(pm)).status,403);assert.equal((await read(employee)).status,404);
+ const token={authorization:'Bearer test-scanner-secret'};const queue=await (await fetch(f.base+'/api/integration/scanner/queue',{headers:token})).json();assert.equal(queue.files[0].id,file.id);
+ const scan=await fetch(f.base+'/api/integration/scanner/receipt',{method:'POST',headers:{...token,'content-type':'application/json'},body:JSON.stringify({id:file.id,sha256:queue.files[0].sha256,result:'Clean',reference:'SCANNER-TEST'})});assert.equal(scan.status,200);assert.equal(await (await read(pm)).text(),bytes.toString());
+ assert.equal((await read(employee)).status,404);
+});
+test('multi-role accounts switch only between granted roles and keep one actor identity',async t=>{
+ const f=await fixture(t);f.store.account({id:'dual',name:'Dual role',email:'dual@example.invalid',role:'manager',additionalRoles:['hod'],department:'Operations'},{password:pwd});
+ const session=await f.login({email:'dual@example.invalid',password:pwd});assert.equal((await f.post('role',{role:'executive'},session)).status,403);
+ const switchRole=await f.post('role',{role:'hod'},session);assert.equal(switchRole.status,200);const cookie=switchRole.headers.get('set-cookie').split(';')[0];
+ const v=await (await fetch(f.base+'/api/platform/view',{headers:{cookie}})).json();assert.equal(v.actor.role,'hod');assert.equal(v.actor.id,'dual');
+});

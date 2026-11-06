@@ -1,15 +1,20 @@
 {
   "name": "tcg-epms-2026",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
-    "dev": "node --watch server/index.mjs --demo",
-    "start": "node server/index.mjs",
-    "demo": "node server/index.mjs --demo",
+    "dev": "node --watch server/platform.mjs --demo",
+    "start": "node server/platform.mjs",
+    "demo": "node server/platform.mjs --demo",
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check.mjs",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "provision": "node server/platform.mjs --provision",
+    "backup": "node server/platform.mjs --backup",
+    "prepare:hosting": "node scripts/prepare-host.mjs"
   }
 }

@@ -8,3 +8,11 @@ coverage/
 .sites-local/
 *.tar.gz
 upload/
+
+build/
+.sites-runtime/
+.wrangler/
+.vinext/
+*.key
+
+build-host.log

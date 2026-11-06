@@ -1,20 +1,31 @@
-# TCG Enterprise Performance Management System
+# The Concept Group performance management system
 
-First executable engineering slice for the 2026 PMS build: a responsive performance workspace with manual employee-level score finalisation, calibration, immutable score history and scoped APIs.
+This release candidate runs quarterly scorecards, commercial monthly reviews, probation confirmation and the decisions that follow. The employee, manager, HOD, PM, ER, Finance, executive and talent workspaces share a server-side workflow engine.
 
-**Status: synthetic reference build, not a production PMS.** Source policy/PRD attachments and real employee records are intentionally absent from this public repository. See [the build plan](docs/IMPLEMENTATION_PLAN.md), [API contracts](docs/API.md), [requirements mapping](docs/TRACEABILITY.md) and [handover](docs/HANDOVER.md).
+## Run the acceptance application
 
-## Run the working service
-
-Requires Node.js 24 LTS. There are no third-party runtime dependencies and no installation step.
+Install Node.js 24 and run the following from the project root.
 
 ```sh
 npm run demo
 ```
 
-Open `http://127.0.0.1:3000`, choose **Performance Management**, and open **Ada Okeke** or **Tunde Balogun** from the finalisation queue. Approve the unchanged supervisor/calibrated score as final. Reopen with a reason and authorisation reference to review the immutable revision history. Release a result, switch to Employee and verify that only the released final result is visible.
+Open http://127.0.0.1:3000 and select **Line manager**. Open **Quarterly appraisals → Ada Okeke · 2026 Q4** to author a fresh scorecard. The four earlier closed quarters use fictional records for talent and merit testing. Switch roles to carry out each approval. The standalone service has no third-party runtime dependencies.
 
-The service persists synthetic records to `data/epms.sqlite`. Set `EPMS_DB_PATH`, `PORT` and `HOST` through the process environment if needed. `npm start` refuses production startup because corporate identity and production infrastructure adapters are not yet configured. Demo role selection is not an authentication solution for real data.
+## Install for engineering acceptance
+
+An empty installation supports individual accounts, encrypted SQLite records, corporate sign-in assertions, roster import, notifications and payroll reconciliation. Start with [the engineering handover](docs/HANDOVER.md) and [installation runbook](docs/pms/runbook.md).
+
+| Resource | Use |
+|---|---|
+| [Delivery and acceptance plan](docs/pms/DELIVERY_PLAN.md) | Business owners, delivery order and acceptance exercises |
+| [Requirements mapping](docs/pms/policy-mapping.md) | Workflow coverage and remaining acceptance work |
+| [Configuration decisions](docs/pms/decisions.md) | TCG decisions required for live use |
+| [Architecture](docs/pms/architecture.md) | Runtime, transaction and persistence contracts |
+| [Integration API](docs/API.md) | Identity, HRIS, notifications, reporting and payroll |
+| [Verification evidence](docs/pms/uat-evidence.md) | Automated and browser verification with limits |
+| [Migration](docs/pms/migration-reconciliation.md) | Historical data, reconciliation and cutover |
+| [Privacy review](docs/pms/privacy-threat-model.md) | Access boundaries, sensitive records and deployment controls |
 
 ```sh
 npm run check
@@ -22,17 +33,4 @@ npm test
 npm run build
 ```
 
-`npm run build` creates a static **browser-storage demonstration** in `dist/` for private visual review. It shares the same calculation and workflow functions; it does not host the SQLite service. Do not upload employee records to it. A failing API never silently switches to browser storage.
-
-## Included
-
-- Overview, scoped employee/track register, finalisation filters, employee profiles and record history.
-- PM finalisation after calibration, separate evidence-based calibration decisions, immutable lock/reopen and explicit employee release.
-- Disabled-by-default deductions with controlled-config validation, decimal score arithmetic and recalculated rating bands.
-- Server sessions for synthetic roles, role and record scope, CSRF controls, append-only audit, SQLite migration and concurrency checks.
-- Basic self-review/check-in notes, live score reports and formula-safe CSV score-register export.
-- Policy decision register, visible implementation progress and GitHub Actions checks.
-
-## Next delivery
-
-Complete strategy/KPI authoring and approvals, manager assessment, protected 360 intake, formal cycle closure, monthly commercial/recovery, probation checkpoints, capability/PIP/appeals, rewards/talent and corporate integrations. No automatic pay, deduction, suspension or employment action is implemented. Deduction CSV import is an optional later feature.
+The portable application is written to `build/tcg-epms/`. The optional hosted acceptance deployment under `hosting/` uses the same domain functions and a separate database for fictional acceptance records. The standalone service is the engineering deployment target.
