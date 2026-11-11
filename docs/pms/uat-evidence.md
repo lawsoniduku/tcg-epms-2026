@@ -1,4 +1,6 @@
-# Verification evidence — 5 November 2026
+# Verification evidence
+
+For current v4.2 scenarios and the Chromium test suite, see [formal review acceptance](release-4.2.md). The results below record the earlier build tested on 5 November 2026.
 
 The release passed 49 automated tests and JavaScript syntax checks with Node 24. The suite includes 29 regressions for the original score-finalisation implementation. The additional 20 tests cover the integrated workflow engine and deployable service. Run the complete suite with `npm test`.
 

@@ -79,7 +79,7 @@ function detail(){
  const r=state.detail;if(!r)return '<div class="empty">Record unavailable.</div>';
  return '<button class="text-btn back" data-nav="'+escape(section)+'">← Back to '+escape(navLabel(section))+'</button>'+heading(r.title,navLabel(r.type)+' · Revision '+r.version,tag(r.status))+scorePanel(r)+(r.related?.length?'<div class="panel"><div class="panel-head"><h2>Employee reviews and actions</h2></div>'+rowTable(r.related)+'</div>':'')+'<div class="detail-grid"><section><div class="panel"><div class="panel-head"><h2>Record details</h2></div><div class="panel-body">'+valueView(r.data)+'</div></div>'+evidencePanel(r)+'</section><aside><div class="panel"><div class="panel-head"><h2>Available actions</h2></div><div class="panel-body action-stack">'+(commands(section,r)||'<p class="muted">No action is due from your role at this stage.</p>')+(r.type==='merit'&&['Exported','Reconciled'].includes(r.status)&&state.actor.role==='finance'?button('Download payroll instructions','data-export="payroll"',true):'')+'</div></div><div class="panel"><div class="panel-head"><h2>Activity</h2></div><div class="panel-body timeline">'+(r.history.map(e=>'<div class="event"><b>'+escape(e.to??label(e.action.split('.').at(-1)))+'</b><p>'+escape(e.actor)+'</p><time>'+escape(fmtDate(e.at))+'</time></div>').join('')||'<p class="muted">No visible events.</p>')+'</div></div></aside></div>';
 }
-const reportFilters={cycle:'',company:'',department:'',manager:''};
+const reportFilters={cycle:'',frequency:'',company:'',department:'',manager:''};
 function operationsReport(){
  const all=state.operations || [];
  if(!all.length)return '';

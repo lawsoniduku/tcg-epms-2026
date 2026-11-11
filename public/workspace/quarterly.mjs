@@ -34,7 +34,7 @@ const nomination=action('review.nominate','Nominate 360 observer',canNominate,(c
     pick('rater','Observer',ctx.s.users.filter(u=>u.active!==false&&u.employeeId!==r.employeeId).map(u=>option(u.id,u.name))),
     pick('category','Relationship',r.snapshot.peopleManager?['Manager','Peer','Direct report','Stakeholder']:['Manager','Peer','Stakeholder']),note('exposure','Relevant working exposure')
   ],(ctx,r,v)=>{
-    need(!ctx.s.liveCalendar || isoDay(ctx.at)<=(cycle(ctx,r).feedbackDue || cycle(ctx,r).managerDue),'Feedback nomination has closed.');
+    need(!ctx.s.liveCalendar || (isoDay(ctx.at)>=cycle(ctx,r).start && isoDay(ctx.at)<=(cycle(ctx,r).feedbackDue || cycle(ctx,r).managerDue)),'Feedback nomination has closed.');
     const identity=id=>ctx.s.users.find(u=>u.id===id)?.employeeId || id;
     need(!list(ctx.s,'response').some(x=>x.reviewId===r.id&&identity(x.rater)===identity(v.rater)),'This observer already has a nomination.');
     if(v.category==='Manager')need(v.rater===r.snapshot.managerId,'Select the assigned manager for this category.');
@@ -131,7 +131,7 @@ export const reviewActions=[
   action('review.moderate','Approve enterprise moderation',atStage('Enterprise moderation',(ctx,r)=>isRole(ctx.actor,'executive')&&!own(ctx.actor,r)),reason,(ctx,r,v)=>{r.moderation={...v,by:ctx.actor.id,at:ctx.at};r.status='Finalisation';return r;}),
   action('review.lock','Lock final score',atStage('Finalisation',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)),(ctx,r)=>[
     ...(policy(ctx,r).allowDeduction==='Yes'?[num('deduction','Deduction points',0,cycle(ctx,r).scoringVersion==='4.2'?999:policy(ctx,r).deductionCap,{default:0})]:[]),
-    note('reason','Adjustment comment',{optional:true}),field('evidence','Evidence reference','text',{optional:true})
+    note('reason','Adjustment comment',{optional:true}),note('employeeExplanation','Explanation for employee on release',{optional:true}),field('evidence','Evidence reference','text',{optional:true})
   ],(ctx,r,v)=>lockReview(ctx,r,v)),
   action('review.reopen','Reopen final score',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status),()=>[note('reason','Reason for correction'),field('approval','Authorisation reference')],(ctx,r,v)=>{
     const c=cycle(ctx,r);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{reason:v.reason});}r.reopen={...v,by:ctx.actor.id,at:ctx.at};r.status='Calibration';r.panel=null;r.releasedAt=null;r.ack=null;r.conversation=null;return r;
@@ -151,7 +151,7 @@ export function lockReview(ctx,r,v){
   need(r.status==='Finalisation','Only records ready for finalisation may be locked.');need(pm(ctx)&&!own(ctx.actor,r),'PM finalisation authority is required.');
   const p=policy(ctx,r),modern=cycle(ctx,r).scoringVersion==='4.2', adjustment={mode:p.allowDeduction==='Yes'?'controlled':'disabled',approvalReference:p.approval?.reference,approvedBy:p.approval?.by,tracks:['A'],maxPoints:p.deductionCap,floor:p.deductionFloor,manualPoints:modern,evidenceRequired:!modern};
   const result=finalisationPreview({track:'A',status:'ready',supervisorScore:r.supervisorScore,calibratedScore:r.calibratedScore,calibrationComplete:true,version:r.version},{expectedVersion:r.version,deductionPoints:v.deduction||0,reason:v.reason,evidence:v.evidence,basis:p.deductionBasis},adjustment);
-  r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
+  r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,employeeExplanation:v.employeeExplanation||'',revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
 }
 export const responseActions=feedbackActions;
 // Express questionnaire means in sixtieths (1–6 observed questions) and KPI weights in hundredths of a percent.

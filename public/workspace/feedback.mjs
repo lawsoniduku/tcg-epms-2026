@@ -32,7 +32,10 @@ export function outstanding(response) {
 
 function open(ctx, response) {
   const review = get(ctx.s, response.reviewId);
-  return !review.assessment && (!ctx.s.liveCalendar || isoDay(ctx.at) <= dueDate(ctx, response));
+  const today=isoDay(ctx.at);
+  const start=review.campaign?.start;
+  return !review.assessment && (!ctx.s.liveCalendar || ((!start || today>=start) && today<=dueDate(ctx,response)));
+
 }
 
 const assigned = (ctx, r) => r.rater === ctx.actor.id && !own(ctx.actor,r) &&

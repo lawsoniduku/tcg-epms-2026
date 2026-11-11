@@ -89,7 +89,7 @@ function displayRecord(ctx,r){
   }
   if(r.type==='review'&&own(ctx.actor,r)){
     const data={cycleId:r.cycleId,goals:r.goals,checkIns:r.checkIns,selfReview:r.selfReview,goalFeedback:r.goalFeedback};
-    if(r.releasedAt)Object.assign(data,{finalScore:r.revisions.at(-1).finalScore,rating:r.revisions.at(-1).finalRating,conversation:r.conversation,development:r.development,receipt:r.ack});
+    if(r.releasedAt)Object.assign(data,{finalScore:r.revisions.at(-1).finalScore,rating:r.revisions.at(-1).finalRating,explanation:r.revisions.at(-1).employeeExplanation||undefined,conversation:r.conversation,development:r.development,receipt:r.ack});
     if(r.releasedAt && r.assessment?.behaviour.source==='360 feedback'){
       data.feedback = {score:Math.round(r.assessment.behaviour.score*100)/100,periodStart:r.campaign?.start,periodEnd:r.campaign?.end,competencies:r.assessment.behaviour.competencies,strengths:r.feedbackThemes?.strengths,development:r.feedbackThemes?.development};
     }
