@@ -1,3 +1,5 @@
+import {mappingField,mappedRating} from './commercial-mapping.mjs';
+import {trackAt} from './governance.mjs';
 import {action,addWorkdays,anyRole,average,choices,create,field,get,heads,isRole,isoDay,journal,list,manages,need,noFields,note,num,option,own,pick,ratingFor,round,yes} from './model.mjs';
 const role=(role,stage)=>(ctx,r)=>ctx.actor.role===role&&r.status===stage&&!own(ctx.actor,r);
 const details=()=>[note('reason','Findings and rationale'),field('evidence','Evidence or authority reference')];
@@ -43,18 +45,23 @@ export const capabilityActions=[
   }),
   action('capability.escalate','Authorise formal escalation',(ctx,r)=>r.status==='HOD review'&&heads(ctx.s,ctx.actor,r),details,(ctx,r,v)=>Object.assign(r,{hodReview:v,status:'ER diagnostic'})),
   action('capability.warning','Record capability diagnostic',role('er','ER diagnostic'),()=>[...details(),note('response','Employee representations and adjustments'),pick('next','Decision',['Return to coaching','Written warning and PIP proposal','PIP proposal'])],(ctx,r,v)=>Object.assign(r,{diagnostic:v,status:v.next==='Return to coaching'?'Coaching':'PIP proposal'})),
-  action('capability.plan','Submit improvement plan',(ctx,r)=>r.status==='PIP proposal'&&caseOwner(ctx,r),()=>[
+  action('capability.plan','Submit improvement plan',(ctx,r)=>r.status==='PIP proposal'&&manages(ctx.s,ctx.actor,r),()=>[
     pick('days','Duration (days)',['30','60','90']),field('start','Plan start','date'),note('targets','Measurable targets and evidence sources'),note('support','Manager support and resources'),field('cadence','Checkpoint dates or cadence'),note('consequence','Possible outcomes and employee rights')
-  ],(ctx,r,v)=>Object.assign(r,{plan:v,status:'PIP approval'})),
+  ],(ctx,r,v)=>Object.assign(r,{plan:{...v,proposedBy:ctx.actor.id},status:'PIP approval'})),
   action('capability.activate','Approve improvement plan',role('er','PIP approval'),()=>[field('reference','Approval and communication reference')],(ctx,r,v)=>{
+    need(r.plan.proposedBy!==ctx.actor.id,'An independent ER reviewer is required.');
     const d=new Date(r.plan.start+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+Number(r.plan.days));r.end=d.toISOString().slice(0,10);r.checkpointDates=[];const step=r.plan.days==='30'?7:14;
     for(let day=step;day<Number(r.plan.days);day+=step){const due=new Date(r.plan.start+'T12:00:00Z');due.setUTCDate(due.getUTCDate()+day);r.checkpointDates.push(due.toISOString().slice(0,10));}
     r.checkpointDates.push(r.end);r.approval=v.reference;r.status='HOD activation';return r;
   }),
   action('capability.hodActivate','Activate approved PIP',(ctx,r)=>r.status==='HOD activation'&&heads(ctx.s,ctx.actor,r),()=>[field('reference','HOD activation and employee communication reference')],(ctx,r,v)=>{r.hodActivation=v.reference;r.status='Active PIP';return r;}),
-  action('capability.check','Record PIP checkpoint',(ctx,r)=>r.status==='Active PIP'&&caseOwner(ctx,r),()=>[note('performance','Measured progress'),note('support','Support actually delivered'),note('response','Employee response')],(ctx,r,v)=>{r.checkpoints.push({...v,at:ctx.at});return r;}),
+  action('capability.check','Record PIP checkpoint',(ctx,r)=>r.status==='Active PIP'&&caseOwner(ctx,r),(ctx,r)=>[pick('scheduled','Scheduled checkpoint',r.checkpointDates.filter(day=>day<=isoDay(ctx.at)&&!r.checkpoints.some(c=>c.scheduled===day))),note('performance','Measured progress'),note('support','Support actually delivered'),note('response','Employee response')],(ctx,r,v)=>{r.checkpoints.push({...v,at:ctx.at});return r;}),
   action('capability.evaluate','Evaluate PIP',role('er','Active PIP'),()=>[pick('outcome','Outcome',['Improved','Justified extension','Formal capability hearing']),...details(),note('response','Employee representations')],(ctx,r,v)=>{
     need(r.checkpoints.length,'Record at least one checkpoint and delivered support.');
+    if(v.outcome==='Formal capability hearing'){
+      need(isoDay(ctx.at)>=r.end,'Complete the improvement period before an adverse evaluation.');
+      need(r.checkpointDates.every(day=>r.checkpoints.some(c=>c.scheduled===day)),'Complete the scheduled checkpoints with evidence of delivered support.');
+    }
     if(v.outcome==='Justified extension'){need(!r.extensions,'Ordinary extension already used.');r.extensions++;r.status='PIP proposal';}
     else r.status=v.outcome==='Improved'?'Closed':'Hearing';r.evaluation=v;return r;
   }),
@@ -64,11 +71,11 @@ export const capabilityActions=[
   action('capability.hear','Record formal hearing',role('er','Hearing'),()=>[field('notice','Notice and hearing date/reference'),note('response','Employee response and representation'),note('alternatives','Adjustments, support and redeployment considered'),pick('recommendation','Recommendation',['Close','Redeploy','Final warning','Propose termination']),field('legal','HR/ER and legal clearance reference')],(ctx,r,v)=>Object.assign(r,{hearing:v,status:'Authorised decision'})),
   action('capability.decide','Approve case decision',role('executive','Authorised decision'),()=>[pick('decision','Decision',['Approve recommendation','Return to hearing']),note('reasons','Written reasons, appeal rights and communication'),field('delegation','Delegated authority reference')],(ctx,r,v)=>Object.assign(r,{decision:v,status:v.decision==='Return to hearing'?'Hearing':'Closed',releasedAt:ctx.at}))
 ];
-export const createTalent=action('talent.new','Open talent review',anyRole('talent','hod'),ctx=>[pick('employeeId','Employee',choices(people(ctx))),pick('potential','Potential axis',['Developing','Established','High']),note('potentialEvidence','Potential evidence distinct from current performance'),note('aspirations','Employee aspirations'),field('owner','Development owner'),field('reviewDate','Development review date','date'),field('commercialMapping','Signed commercial rating mapping','text',{optional:true}),note('development','Development plan'),field('successorFor','Potential succession role','text',{optional:true})],(ctx,r,v)=>{
+export const createTalent=action('talent.new','Open talent review',anyRole('talent','hod'),ctx=>[pick('employeeId','Employee',choices(people(ctx))),pick('potential','Potential axis',['Developing','Established','High']),note('potentialEvidence','Potential evidence distinct from current performance'),note('aspirations','Employee aspirations'),field('owner','Development owner'),field('reviewDate','Development review date','date'),mappingField(ctx,'commercialMapping'),note('development','Development plan'),field('successorFor','Potential succession role','text',{optional:true})],(ctx,r,v)=>{
   const e=get(ctx.s,v.employeeId,'employee');
   const history=list(ctx.s,'review').filter(a=>a.employeeId===e.id&&a.status==='Closed').sort((a,b)=>get(ctx.s,b.cycleId).end.localeCompare(get(ctx.s,a.cycleId).end)).slice(0,4);
   let scores=history.map(a=>a.revisions.at(-1).finalScore);let periods=history.map(a=>a.id);let sustained=scores.length===4;
-  if(e.commercial){need(v.commercialMapping,'An approved commercial mapping is required.');const months=list(ctx.s,'commercial').filter(m=>m.employeeId===e.id&&['Released','Acknowledged'].includes(m.status)).sort((a,b)=>b.month.localeCompare(a.month)).slice(0,12);scores=months.map(m=>m.result.score);periods=months.map(m=>m.id);sustained=months.length===12;}
+  if(trackAt(ctx.s,e,isoDay(ctx.at))==='B'){need(v.commercialMapping,'An approved commercial mapping is required.');const months=list(ctx.s,'commercial').filter(m=>m.employeeId===e.id&&['Released','Acknowledged'].includes(m.status)).sort((a,b)=>b.month.localeCompare(a.month)).slice(0,12);scores=months.map(m=>mappedRating(ctx.s,v.commercialMapping,m));periods=months.map(m=>m.id);sustained=months.length===12;}
   need(scores.length,'At least one closed performance result is required.');
   const index=average(scores);return create(ctx,'talent',e.title+' · talent review','Draft',{...v,periods,index,performance:index<2.75?'Developing':index<3.75?'Effective':'High',promotionEligible:sustained&&index>=4});
 });

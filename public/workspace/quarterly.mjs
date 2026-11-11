@@ -1,3 +1,4 @@
+import {feedbackActions,redactThemes} from './feedback.mjs';
 import {effectiveGoals} from './governance.mjs';
 import {action,addWorkdays,average,choices,create,dateValue,evidenceScore,field,get,heads,isRole,isoDay,journal,list,manages,need,nextStatus,noFields,note,notify,num,option,own,perspectives,pick,ratingFor,round,scoreValue,trackAScore,yes} from './model.mjs';
 import {finalisationPreview} from '../shared/domain.mjs';
@@ -41,9 +42,17 @@ export const reviewActions=[
     if(v.gateCap<5)need(v.gate,'Describe the critical gate.');
     r.goals.push(goal);return r;
   }),
+  action('review.applyTemplate','Apply approved KPI template',goalsEditable,(ctx,r)=>[
+    pick('template','Role or department template',choices(list(ctx.s,'template').filter(t=>t.status==='Approved'&&t.department===r.snapshot.department&&(!t.jobTitle||t.jobTitle===r.snapshot.jobTitle))))
+  ],(ctx,r,v)=>{
+    const template=get(ctx.s,v.template,'template');
+    need(template.goals.every(g=>!r.goals.some(existing=>existing.title.toLowerCase()===g.title.toLowerCase())),'A template KPI already exists on this scorecard.');
+    for(const goal of template.goals)r.goals.push({...structuredClone(goal),id:crypto.randomUUID(),template:template.id});
+    return r;
+  }),
   action('review.removeGoal','Remove KPI',goalsEditable,(ctx,r)=>[pick('goal','KPI',choices(r.goals))],(ctx,r,v)=>{r.goals=r.goals.filter(g=>g.id!==v.goal);return r;}),
   action('review.submitGoals','Submit scorecard',goalsEditable,noFields,(ctx,r)=>{qa(r,policy(ctx,r));r.status='Manager goal approval';return r;}),
-  action('review.managerApprove','Approve team scorecard',atStage('Manager goal approval',manager),noFields,(ctx,r)=>{r.managerApproval=ctx.actor.id;r.status='PM quality review';return r;}),
+  action('review.managerApprove','Approve team scorecard',atStage('Manager goal approval',manager),()=>[note('discussion','Goal-setting discussion with the employee and agreed changes')],(ctx,r,v)=>{r.goalDiscussion=v.discussion;r.managerApproval=ctx.actor.id;r.status='PM quality review';return r;}),
   action('review.returnGoals','Return goals for revision',(ctx,r)=>r.status==='PM quality review'&&pm(ctx)||r.status==='HOD baseline approval'&&hod(ctx,r)||r.status==='Manager goal approval'&&manager(ctx,r),()=>[note('reason','Corrections required')],(ctx,r,v)=>{r.goalFeedback=v.reason;r.status='Goal setting';return r;}),
   action('review.qa','Pass KPI quality review',atStage('PM quality review',pm),()=>[note('qa','Quality review findings')],(ctx,r,v)=>{need(ctx.actor.id!==r.managerApproval,'An independent PM reviewer is required.');qa(r,policy(ctx,r));r.qualityReview={by:ctx.actor.id,note:v.qa};r.status='HOD baseline approval';return r;}),
   action('review.baseline','Lock approved baseline',atStage('HOD baseline approval',hod),()=>[field('reference','Baseline approval reference')],(ctx,r,v)=>{
@@ -64,18 +73,25 @@ export const reviewActions=[
     const c=cycle(ctx,r);need(v.observed>=c.start&&v.observed<=c.end&&v.observed<=isoDay(ctx.at),'Use an observation from this review period.');
     r.observation={...v,by:ctx.actor.id};return r;
   }),
-  action('review.nominate','Nominate 360 observer',(ctx,r)=>manager(ctx,r)&&['In progress','Self-review','Manager assessment'].includes(r.status)&&cycle(ctx,r).behaviourMode==='Full 360',(ctx,r)=>[
+  redactThemes,
+  action('review.nominate','Nominate 360 observer',(ctx,r)=>own(ctx.actor,r)&&['In progress','Self-review','Manager assessment'].includes(r.status)&&cycle(ctx,r).behaviourMode==='Full 360',(ctx,r)=>[
     pick('rater','Observer',ctx.s.users.filter(u=>u.active!==false&&u.employeeId!==r.employeeId).map(u=>option(u.id,u.name))),
     pick('category','Relationship',r.snapshot.peopleManager?['Manager','Peer','Direct report','Stakeholder']:['Manager','Peer','Stakeholder']),note('exposure','Relevant working exposure')
   ],(ctx,r,v)=>{
+    need(!ctx.s.liveCalendar || isoDay(ctx.at)<=(cycle(ctx,r).feedbackDue || cycle(ctx,r).managerDue),'Feedback nomination has closed.');
     need(!list(ctx.s,'response').some(x=>x.reviewId===r.id&&x.rater===v.rater),'This observer already has a nomination.');
     if(v.category==='Manager')need(v.rater===r.snapshot.managerId,'Select the assigned manager for this category.');
     if(v.rater===r.snapshot.managerId)need(v.category==='Manager','The assigned manager belongs to the Manager category.');
+    const nominee=ctx.s.users.find(u=>u.id===v.rater);
+    if(v.category==='Direct report' && nominee.employeeId){
+      const subjectLogins=ctx.s.users.filter(u=>u.employeeId===r.employeeId).map(u=>u.id);
+      need(subjectLogins.includes(get(ctx.s,nominee.employeeId,'employee').managerId),'The roster does not identify this observer as a direct report.');
+    }
     const item=create(ctx,'response',r.title+' · '+v.category,'Nomination',{reviewId:r.id,employeeId:r.employeeId,cycleId:r.cycleId,rater:v.rater,category:v.category,exposure:v.exposure});
-    journal(ctx,item,'response.nominate');return r;
+    journal(ctx,item,'response.nominate');notify(ctx,item,r.actingReviewer || r.snapshot.managerId,'Validate a 360 nomination');return r;
   }),
   action('review.assess','Submit supervisor assessment',atStage('Manager assessment',manager),(ctx,r)=>[
-    ...r.goals.flatMap(g=>[num('actual_'+g.id,g.title+' · actual result',-1e12,1e12),field('evidence_'+g.id,g.title+' · verified evidence'),yes('stretch_'+g.id,g.title+' · stretch and quality confirmed'),...(g.gate?[yes('pass_'+g.id,g.title+' · critical gate passed')]:[])]),
+    ...r.goals.flatMap(g=>[num('actual_'+g.id,g.title+' · actual result',-1e12,1e12),field('evidence_'+g.id,g.title+' · verified evidence'),note('rationale_'+g.id,g.title+' · rating rationale (required for a rating other than 3 or a failed gate)',{optional:true}),yes('stretch_'+g.id,g.title+' · stretch and quality confirmed'),...(g.gate?[yes('pass_'+g.id,g.title+' · critical gate passed')]:[])]),
     note('summary','Supervisor evidence and summary')
   ],(ctx,r,v)=>{
     need(r.baseline,'Scorecard baseline is missing.');
@@ -84,7 +100,9 @@ export const reviewActions=[
     const items=effectiveGoals(r,cycle(ctx,r).end).map(g=>{
       const raw=evidenceScore(v['actual_'+g.id],g,v['stretch_'+g.id]==='Yes');
       const achieved=g.gate&&v['pass_'+g.id]!=='Yes'?Math.min(raw,g.gateCap):raw;
-      return {goalId:g.id,title:g.title,actual:v['actual_'+g.id],weight:g.weight,raw,rating:achieved,evidence:v['evidence_'+g.id],target:g.target,achievement:g.direction==='Higher is better'?round(100*v['actual_'+g.id]/g.target):null};
+      const rationale=v['rationale_'+g.id];
+      if(achieved!==3||g.gate&&v['pass_'+g.id]!=='Yes')need(rationale,'Explain the rating and any failed gate for '+g.title+'.');
+      return {rationale,goalId:g.id,title:g.title,actual:v['actual_'+g.id],weight:g.weight,raw,rating:achieved,evidence:v['evidence_'+g.id],target:g.target,achievement:g.direction==='Higher is better'?round(100*v['actual_'+g.id]/g.target):null};
     });
     const bsc=round(items.reduce((sum,g)=>sum+g.rating*g.weight,0)/100);
     const behaviour=behaviourResult(ctx,r);
@@ -106,7 +124,7 @@ export const reviewActions=[
   action('review.reopen','Reopen final score',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status),()=>[note('reason','Reason for correction'),field('approval','Authorisation reference')],(ctx,r,v)=>{
     const c=cycle(ctx,r);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{reason:v.reason});}r.reopen={...v,by:ctx.actor.id,at:ctx.at};r.status='Calibration';r.panel=null;r.releasedAt=null;r.ack=null;r.conversation=null;return r;
   }),
-  action('review.release','Release result to employee',atStage('Locked',pm),noFields,(ctx,r)=>{r.status='Released';r.releasedAt=ctx.at;
+  action('review.release','Release result to employee',atStage('Locked',pm),noFields,(ctx,r)=>{if(r.assessment?.behaviour.source==='360 feedback')need(r.feedbackReviewed,'Review feedback for release first.');r.status='Released';r.releasedAt=ctx.at;
     const rating=r.revisions.at(-1).finalRating;
     if(rating<=2){r.followup={kind:rating===1?'Formal capability assessment':'Documented coaching',owner:r.snapshot.managerId,due:addWorkdays(isoDay(ctx.at),10,policy(ctx,r).holidays)};notify(ctx,r,r.snapshot.managerId,'Review performance support and context',r.followup.due);}
     notify(ctx,r,ctx.s.users.find(u=>u.employeeId===r.employeeId)?.id,'Your appraisal result is available');return r;}),
@@ -123,14 +141,7 @@ export function lockReview(ctx,r,v){
   const result=finalisationPreview({track:'A',status:'ready',supervisorScore:r.supervisorScore,calibratedScore:r.calibratedScore,calibrationComplete:true,version:r.version},{expectedVersion:r.version,deductionPoints:v.deduction||0,reason:v.reason,evidence:v.evidence,basis:p.deductionBasis},adjustment);
   r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
 }
-export const responseActions=[
-  action('response.invite','Approve and invite',atStage('Nomination',pm),noFields,(ctx,r)=>{r.status='Invited';r.validatedBy=ctx.actor.id;notify(ctx,r,r.rater,'Complete confidential feedback');return r;}),
-  action('response.submit','Submit confidential feedback',atStage('Invited',(ctx,r)=>ctx.actor.id===r.rater),()=>[
-    ...['integrity','collaboration','accountability','customerFocus','problemSolving','improvement'].map(k=>num(k,k.replace(/([A-Z])/g,' $1')+' (1–5)',1,5,{integer:true})),
-    note('example','Observed example (visible to moderation only)')
-  ],(ctx,r,v)=>{r.score=average(Object.values(v).filter(x=>typeof x==='number'));r.answers=v;r.status='Submitted';return r;}),
-  action('response.moderate','Validate response',atStage('Submitted',pm),()=>[pick('decision','Response quality',['Valid','Exclude']),note('reason','Moderation note')],(ctx,r,v)=>{r.moderation=v.reason;r.status=v.decision==='Valid'?'Validated':'Excluded';return r;})
-];
+export const responseActions=feedbackActions;
 export function behaviourResult(ctx,r) {
   const c=cycle(ctx,r),p=c.policy;
   if(c.behaviourMode==='Documented observations'){

@@ -1,3 +1,5 @@
+import {mappingField,mappedRating} from './commercial-mapping.mjs';
+import {trackAt} from './governance.mjs';
 import {action,addMonths,anyRole,average,choices,create,csv,field,get,isRole,journal,list,need,noFields,note,num,pick,ratingFor,round,yes} from './model.mjs';
 import {hundredths} from '../shared/domain.mjs';
 import {lockReview} from './quarterly.mjs';
@@ -7,18 +9,24 @@ function moneyProduct(base,reference,factor,position,cap){
   const amount=salary*BigInt(hundredths(reference))*BigInt(hundredths(factor))*BigInt(hundredths(position))/100000000n;
   return Number(amount<ceiling?amount:ceiling);
 }
+function windowLastDate(r){
+  const end=new Date(addMonths(r.start,r.frequency==='Annual'?12:6)+'T12:00:00Z');
+  end.setUTCDate(end.getUTCDate()-1);
+  return end.toISOString().slice(0,10);
+}
 function eligibleHistory(s,employee,r){
   const cEnd=addMonths(r.start,r.frequency==='Annual'?12:6);
   const months=r.frequency==='Annual'?12:6;
   const exception=list(s,'meritException').some(x=>x.employeeId===employee.id&&x.meritId===r.id&&x.status==='Approved');
-  if(employee.track==='B'){
+  const track=trackAt(s,employee,windowLastDate(r));
+  if(track==='B'){
     need(r.salesMap,'An approved commercial-to-common-rating mapping is required.');
-    const scores=list(s,'commercial').filter(a=>a.employeeId===employee.id&&['Released','Acknowledged'].includes(a.status)&&a.month>=r.start&&a.month<cEnd);
+    const scores=list(s,'commercial').filter(a=>a.employeeId===employee.id&&['Released','Acknowledged'].includes(a.status)&&a.month>=r.start&&a.month<cEnd&&trackAt(s,employee,a.month)==='B').sort((a,b)=>a.month.localeCompare(b.month));
     need(scores.length===months||scores.length>0&&exception,'A full window of validated commercial months is required.');
-    return scores.map(a=>({id:a.id,version:a.version,score:a.result.score}));
+    return scores.map(a=>({id:a.id,version:a.version,score:mappedRating(s,r.salesMap,a)}));
   }
-  need(employee.track==='A','Only confirmed eligible employees may enter merit review.');
-  const reviews=list(s,'review').filter(a=>a.employeeId===employee.id&&a.status==='Closed'&&get(s,a.cycleId).start>=r.start&&get(s,a.cycleId).end<cEnd);
+  need(track==='A','Only confirmed eligible employees may enter merit review.');
+  const reviews=list(s,'review').filter(a=>a.employeeId===employee.id&&a.status==='Closed'&&get(s,a.cycleId).start>=r.start&&get(s,a.cycleId).end<cEnd).sort((a,b)=>get(s,a.cycleId).end.localeCompare(get(s,b.cycleId).end));
   need(reviews.length===months/3||reviews.length>0&&exception,'A full window of closed quarterly appraisals is required.');
   return reviews.map(a=>({id:a.id,version:a.version,score:a.revisions.at(-1).finalScore}));
 }
@@ -32,11 +40,11 @@ function fresh(s,r){
     need(!list(s,'capability').some(c=>c.employeeId===e.id&&(c.kind==='Misconduct investigation'&&c.status!=='Closed'||['Active PIP','Hearing','Authorised decision'].includes(c.status))),'An eligibility review is required for an open case.');
   }
 }
-export const createMerit=action('merit.new','Model merit window',anyRole('finance'),()=>[
+export const createMerit=action('merit.new','Model merit window',anyRole('finance'),ctx=>[
   field('title','Review title'),pick('frequency','Approved cadence',['H1/H2','Annual']),field('start','Window start','date'),
   field('authority','Approved cadence and matrix reference'),num('pool','Budget pool (NGN)',0,1e12),num('reference','Reference merit rate (%)',0,100),num('cap','Maximum increase (%)',0,100),
   ...[3,4,5].map(n=>num('factor'+n,'Approved factor for rating '+n,0,10)),
-  field('salesMap','Commercial mapping reference','text',{optional:true}),num('cpiStart','CPI index at window start',0.01,1e9),num('cpiEnd','CPI index at window end',0.01,1e9),
+  mappingField(ctx,'salesMap'),num('cpiStart','CPI index at window start',0.01,1e9),num('cpiEnd','CPI index at window end',0.01,1e9),
   field('cpiSource','CPI source and observation dates')
 ],(ctx,r,v)=>{
   need(v.start.endsWith('-01-01')||v.frequency==='H1/H2'&&v.start.endsWith('-07-01'),'Choose 1 January or the applicable 1 July half-year start.');
@@ -47,8 +55,8 @@ export const createMerit=action('merit.new','Model merit window',anyRole('financ
 export const meritActions=[
   action('merit.remodel','Return proposal to modelling',(ctx,r)=>ctx.actor.role==='finance'&&['HR equity review','Executive approval','Export ready'].includes(r.status),()=>[note('reason','Changed data or budget reason')],(ctx,r,v)=>{r.priorApprovalRounds??=[];r.priorApprovalRounds.push({reason:v.reason,at:ctx.at,costKobo:r.costKobo,authorisation:r.authorisation??null});r.authorisation=null;r.equity=null;r.status='Modelling';return r;}),
 
-  action('merit.line','Add or replace salary proposal',byRole('Modelling','finance'),ctx=>[
-    pick('employeeId','Employee',choices(list(ctx.s,'employee').filter(e=>e.active&&e.confirmed&&ctx.scope(e)))),num('salary','Annual guaranteed salary (NGN)',0.01,1e11),
+  action('merit.line','Add or replace salary proposal',byRole('Modelling','finance'),(ctx,r)=>[
+    pick('employeeId','Employee',choices(list(ctx.s,'employee').filter(e=>e.active&&trackAt(ctx.s,e,windowLastDate(r))!=='C'&&ctx.scope(e)))),num('salary','Annual guaranteed salary (NGN)',0.01,1e11),
     num('position','Approved pay-position factor',0,5,{default:1}),field('paySource','Pay and grade/range reference'),note('eligibility','Eligibility, risk and equity assessment')
   ],(ctx,r,v)=>{
     const e=get(ctx.s,v.employeeId,'employee'),history=eligibleHistory(ctx.s,e,r);const index=average(history.map(h=>h.score)),rating=ratingFor(index),factor=rating>=3?r['factor'+rating]:0;

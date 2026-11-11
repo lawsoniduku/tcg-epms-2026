@@ -101,6 +101,8 @@ export function heads(s,u,r) {const e=r?.snapshot??person(s,r);return !!e&&u.rol
 export function scope(s,u,r) {
   const company=r.company??r.snapshot?.company??person(s,r)?.company;
   if(company&&u.company&&company!==u.company)return false;
+  if(r.type==='template')return isRole(u,'pm','executive','auditor')||r.department===u.department&&(r.status==='Approved'||u.role==='hod');
+  if(r.type==='mapping')return isRole(u,'pm','sales','finance','executive','talent','hod','auditor');
   if(r.type==='payBasis')return isRole(u,'finance');
   if(r.type==='meritException')return isRole(u,'pm','finance','executive');
   if(r.type==='cutover')return isRole(u,'admin','pm','finance','er','executive','auditor');
@@ -108,7 +110,7 @@ export function scope(s,u,r) {
   if(r.type==='migration')return isRole(u,'pm','admin','auditor');
   if(r.type==='scenario')return isRole(u,'finance','executive');
   if(r.type==='track')return isRole(u,'pm')||heads(s,u,r);
-  if(r.type==='response')return !own(u,r)&&(r.rater===u.id||isRole(u,'pm')||manages(s,u,r));
+  if(r.type==='response')return !own(u,r)&&(r.rater===u.id||isRole(u,'pm')||(r.status==='Nomination'&&manages(s,u,s.records.find(review=>review.id===r.reviewId))));
   if(r.type==='merit')return isRole(u,'finance','executive') || u.role==='pm'&&r.status==='HR equity review';
   if(r.type==='batch')return isRole(u,'pm','auditor')||u.role==='admin'&&r.status==='Applied'&&!r.rows;
   if(r.type==='policy'||r.type==='strategy'||r.type==='cycle')return true;

@@ -1,3 +1,4 @@
+import {rosterAt} from './roster.mjs';
 import {action,addWorkdays,anyRole,choices,create,csv,field,get,heads,isRole,isoDay,journal,list,manages,need,noFields,note,num,option,own,pick,route,yes} from './model.mjs';
 const assigned=(ctx,r)=>manages(ctx.s,ctx.actor,r);
 export const amendments=[
@@ -21,17 +22,18 @@ export const panel=action('review.panel','Convene calibration panel',(ctx,r)=>r.
   field('members','Attendees and functional representation'),field('mandate','Panel mandate or delegation reference'),note('conflicts','Conflict declarations and recusals')
 ],(ctx,r,v)=>{r.panel={...v,appointedBy:ctx.actor.id,at:ctx.at};return r;});
 export const responseExtra=[
-  action('response.invalidate','Invalidate conflicted nomination',(ctx,r)=>ctx.actor.role==='pm'&&['Nomination','Invited','Submitted','Validated'].includes(r.status)&&!get(ctx.s,r.reviewId).assessment,()=>[note('reason','Conflict, eligibility or quality reason')],(ctx,r,v)=>{r.status='Excluded';r.moderation=v.reason;return r;})
+  action('response.invalidate','Invalidate conflicted nomination',(ctx,r)=>ctx.actor.role==='pm'&&['Nomination','HR validation','Invited','In progress','Submitted','Validated'].includes(r.status)&&!get(ctx.s,r.reviewId).assessment,()=>[note('reason','Conflict, eligibility or quality reason')],(ctx,r,v)=>{r.status='Excluded';r.moderation=v.reason;return r;})
 ];
 export const caseResponse=action('capability.respond','Submit employee representation',(ctx,r)=>own(ctx.actor,r)&&r.status!=='Closed',()=>[note('representation','Your response and circumstances'),field('evidence','Evidence reference','text',{optional:true})],(ctx,r,v)=>{r.employeeRepresentations??=[];r.employeeRepresentations.push({...v,at:ctx.at});return r;});
 export const trackRequest=action('track.new','Request track assignment',anyRole('pm','hod'),ctx=>[
-  pick('employeeId','Employee',choices(list(ctx.s,'employee').filter(e=>e.active&&e.confirmed&&ctx.scope(e)))),pick('track','Primary track',['A','B']),field('effective','Effective from','date'),note('rationale','Mixed-role duties and proposed treatment'),field('evidence','Supporting evidence')
-],(ctx,r,v)=>{need(v.effective>=isoDay(ctx.at),'Track assignment must be prospective.');const e=get(ctx.s,v.employeeId);return create(ctx,'track',e.title+' · track '+v.track,'HOD review',{...v,original:route(e)});});
+  pick('employeeId','Employee',choices(list(ctx.s,'employee').filter(e=>e.active&&trackAt(ctx.s,e,isoDay(ctx.at))!=='C'&&ctx.scope(e)))),pick('track','Primary track',['A','B']),field('effective','Effective from','date'),note('rationale','Mixed-role duties and proposed treatment'),field('evidence','Supporting evidence')
+],(ctx,r,v)=>{need(v.effective>=isoDay(ctx.at),'Track assignment must be prospective.');const e=get(ctx.s,v.employeeId);return create(ctx,'track',e.title+' · track '+v.track,'HOD review',{...v,original:trackAt(ctx.s,e,v.effective)});});
 export const trackActions=[
   action('track.hod','Endorse mixed-role assignment',(ctx,r)=>r.status==='HOD review'&&heads(ctx.s,ctx.actor,r),()=>[field('reference','Functional approval')],(ctx,r,v)=>{r.hod={...v,by:ctx.actor.id};r.status='HR approval';return r;}),
   action('track.publish','Approve dated assignment',(ctx,r)=>r.status==='HR approval'&&ctx.actor.role==='pm'&&ctx.actor.id!==r.hod.by,()=>[field('reference','HR approval')],(ctx,r,v)=>{need(r.effective>=isoDay(ctx.at),'Approval must be prospective.');r.hr={...v,by:ctx.actor.id};r.status='Approved';return r;})
 ];
 export function trackAt(s,e,date){
+  e=rosterAt(e,date);
   if(!e.confirmed&&!(e.confirmedFrom&&e.confirmedFrom<=date))return 'C';
   const override=list(s,'track').filter(r=>r.employeeId===e.id&&r.status==='Approved'&&r.effective<=date).sort((a,b)=>b.effective.localeCompare(a.effective))[0];
   return override?.track??(e.commercial?'B':'A');

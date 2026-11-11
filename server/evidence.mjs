@@ -21,7 +21,7 @@ export function listEvidence(store,user,entity){
 export function uploadEvidence(store,user,b){
  const s=store.load(),r=get(s,b.entity);requireThat(scope(s,user,r),'Record unavailable.',404);
  requireThat(!isRole(user,'auditor')&&!['Closed','Locked','Reconciled','Exported','Approved exception'].includes(r.status),'The record is read-only.',403);
- if(r.type==='response')requireThat(r.rater===user.id&&r.status==='Invited','Only the invited observer can attach evidence.',403);
+ if(r.type==='response')requireThat(r.rater===user.id&&['Invited','In progress'].includes(r.status),'Only the invited observer can attach evidence.',403);
  const name=safeName(b.name);need(name&&typeof b.base64==='string'&&b.base64.length<=Math.ceil(limit/3)*4,'File exceeds 2 MiB or is missing.');
  const bytes=Buffer.from(b.base64,'base64');need(bytes.length>0&&bytes.length<=limit,'Invalid file size.');
  const extension=name.split('.').at(-1).toLowerCase();

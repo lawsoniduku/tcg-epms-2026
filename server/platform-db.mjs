@@ -30,6 +30,8 @@ export function openPlatform(filename,{demo=false,key}={}){
     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,actor TEXT NOT NULL REFERENCES accounts(id),csrf TEXT NOT NULL,expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS auth_limits(bucket TEXT PRIMARY KEY,count INTEGER NOT NULL,expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS access_log(seq INTEGER PRIMARY KEY,at TEXT,actor TEXT,operation TEXT,entity TEXT);
+    CREATE TRIGGER IF NOT EXISTS immutable_access BEFORE UPDATE ON access_log BEGIN SELECT RAISE(ABORT,'Immutable access log');END;
+    CREATE TRIGGER IF NOT EXISTS retain_access BEFORE DELETE ON access_log BEGIN SELECT RAISE(ABORT,'Immutable access log');END;
     CREATE TRIGGER IF NOT EXISTS immutable_events BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT,'Immutable audit event');END;
     CREATE TRIGGER IF NOT EXISTS retain_events BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT,'Immutable audit event');END;
     CREATE TRIGGER IF NOT EXISTS immutable_snapshots BEFORE UPDATE ON snapshots BEGIN SELECT RAISE(ABORT,'Immutable revision');END;

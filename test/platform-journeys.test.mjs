@@ -15,7 +15,7 @@ function journey(history=true){
 function goalSet(j,r){
  const objective=list(j.s,'strategy').find(x=>x.level==='Individual').id;
  ['Financial','Customer','Process','Learning'].forEach((perspective,i)=>j.doIt('manager',r,'goal',{title:perspective+' test',objective,perspective,outcome:'Deliver outcome',weight:[20,20,50,10][i],baseline:60,target:100,unit:'units',direction:'Higher is better',thresholds:'',source:'Source ledger',evidence:'Period report',leadership:'No',gateCap:5,gate:''}));
- j.doIt('manager',r,'submitGoals');j.doIt('manager',r,'managerApprove');j.doIt('pm',r,'qa',{qa:'Checked sources, weights and standards'});j.doIt('hod',r,'baseline',{reference:'AUTH'});
+ j.doIt('manager',r,'submitGoals');j.doIt('manager',r,'managerApprove',{discussion:'Discussed and agreed targets with employee'});j.doIt('pm',r,'qa',{qa:'Checked sources, weights and standards'});j.doIt('hod',r,'baseline',{reference:'AUTH'});
 }
 function new360(j){
  const policy=list(j.s,'policy')[0];
@@ -23,15 +23,15 @@ function new360(j){
  j.doIt('pm',c,'open');return list(j.s,'review').find(r=>r.cycleId===c.id);
 }
 function feedback(j,r,who,category){
- j.doIt('manager',r,'nominate',{rater:who,category,exposure:'Observed employee throughout the period'});
- const response=list(j.s,'response').find(x=>x.reviewId===r.id&&x.rater===who);j.doIt('pm',response,'invite');
- j.doIt(who,response,'submit',{integrity:4,collaboration:4,accountability:4,customerFocus:4,problemSolving:4,improvement:4,example:'Restricted example for moderation'});j.doIt('pm',response,'moderate',{decision:'Valid',reason:'Relevant observed behaviour'});return response;
+ j.doIt('employee',r,'nominate',{rater:who,category,exposure:'Observed employee throughout the period'});
+ const response=list(j.s,'response').find(x=>x.reviewId===r.id&&x.rater===who);j.doIt('manager',response,'endorse',{decision:'Endorse',reason:'Verified exposure'});j.doIt('pm',response,'invite',{validation:'Checked relationship and conflicts'});
+ j.doIt(who,response,'submit',{integrity:4,execution:4,teamwork:4,customerFocus:4,improvement:4,...(r.snapshot.peopleManager?{leadership:4}:{}),example:'Restricted example for moderation'});j.doIt('pm',response,'moderate',{decision:'Valid',reason:'Relevant observed behaviour'});return response;
 }
 test('Track A from authored KPIs and 360 observations through independent calibration, employee receipt and closure',()=>{
  const j=journey(false),r=new360(j);goalSet(j,r);
  j.doIt('manager',r,'checkin',{kind:'Mid-quarter checkpoint',risk:'On track',progress:'Measures reviewed',support:'Training agreed',due:'2027-03-01'});
  j.doIt('manager',r,'openSelf');const self={development:'Improve QA'},actual={summary:'Reconciled to period register'};
- for(const g of r.goals){self['score_'+g.id]=5;self['note_'+g.id]='Documented contribution';actual['actual_'+g.id]=110;actual['evidence_'+g.id]='Validated measurement';actual['stretch_'+g.id]='No';}
+ for(const g of r.goals){self['score_'+g.id]=5;self['note_'+g.id]='Documented contribution';actual['actual_'+g.id]=110;actual['evidence_'+g.id]='Validated measurement';actual['stretch_'+g.id]='No';actual['rationale_'+g.id]='Verified output exceeded the agreed threshold';}
  j.doIt('employee',r,'self',self);feedback(j,r,'manager','Manager');const peer=feedback(j,r,'observer1','Peer');feedback(j,r,'observer2','Peer');feedback(j,r,'observer3','Peer');feedback(j,r,'observer4','Stakeholder');
  assert.throws(()=>view(j.s,j.user('employee'),{id:peer.id}),/scope/);
  j.doIt('manager',r,'assess',actual);assert.equal(r.supervisorScore,4);assert.equal(r.assessment.behaviour.groups.find(x=>x.category==='Peer').score,4);
@@ -41,7 +41,8 @@ test('Track A from authored KPIs and 360 observations through independent calibr
  assert.throws(()=>j.doIt('pm',r,'lock',{}),/allow/);
  j.doIt('executive',r,'moderate',{reason:'Panel evidence confirmed',evidence:'E2'});j.doIt('pm',r,'lock',{reason:'',evidence:''});
  assert.equal(view(j.s,j.user('employee'),{id:r.id}).detail.data.finalScore,undefined);
- j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.calibrations,undefined);
+ assert.throws(()=>j.doIt('pm',r,'release'),/feedback/);j.doIt('pm',r,'feedbackThemes',{Peer:'Supports cross-team delivery',check:'Reviewed and safe to release'});
+ j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.feedback.categories.find(g=>g.category==='Peer').summary,'Supports cross-team delivery');assert.equal(employeeView.data.calibrations,undefined);
  j.doIt('manager',r,'conversation',{discussion:'Reviewed contribution',owner:'Manager',due:'2027-05-01'});j.doIt('employee',r,'ack',{comment:'Received'});j.doIt('pm',r,'close',{development:'Coaching plan'});assert.equal(r.status,'Closed');
  assert.match(exportData(j.s,j.user('auditor'),'scores'),/4\.55/);
 });
@@ -92,7 +93,7 @@ test('capability case requires support, ER and HOD approval, checkpoints and a h
  j.doIt('manager',r,'coach',{support:'Training',response:'Received',followup:'2026-11-20',next:'Request formal review'});j.doIt('hod',r,'escalate',{reason:'Gap persists',evidence:'E'});j.doIt('er',r,'warning',{reason:'Diagnostic completed',evidence:'E',response:'Employee heard',next:'Written warning and PIP proposal'});
  j.doIt('manager',r,'plan',{days:'30',start:'2026-11-06',targets:'Close 90% within SLA',support:'Training and 1:1',cadence:'Weekly on Friday',consequence:'Reviewed against evidence with right to respond'});
  j.doIt('er',r,'activate',{reference:'ER'});j.doIt('hod',r,'hodActivate',{reference:'HOD'});assert.throws(()=>j.doIt('er',r,'evaluate',{outcome:'Improved',reason:'OK',evidence:'E',response:'Employee heard'}),/checkpoint/);
- j.doIt('manager',r,'check',{performance:'Improved',support:'Coaching delivered',response:'Discussed'});j.doIt('er',r,'evaluate',{outcome:'Formal capability hearing',reason:'Continued gap',evidence:'E',response:'Feedback'});assert.equal(r.status,'Hearing');assert.throws(()=>j.doIt('executive',r,'suspend',{}),/allow/);
+ for(const day of r.checkpointDates)j.doIt('manager',r,'check',{scheduled:day,performance:'Improved',support:'Coaching delivered',response:'Discussed'},day+'T12:00:00Z');j.doIt('er',r,'evaluate',{outcome:'Formal capability hearing',reason:'Continued gap',evidence:'E',response:'Feedback'},r.end+'T13:00:00Z');assert.equal(r.status,'Hearing');assert.throws(()=>j.doIt('executive',r,'suspend',{}),/allow/);
 });
 test('calendar excludes weekends and approved holidays and handles month end',()=>{assert.equal(addWorkdays('2026-11-06',1,['2026-11-09']),'2026-11-10');assert.equal(addMonths('2027-01-31',1),'2027-02-28');});
 
@@ -136,4 +137,63 @@ test('four closed results support an independently evidenced talent nomination a
 test('inflation scenarios require matching CPI periods and distinguish purchasing power from nominal awards',()=>{
  const j=journey(false),input={title:'Annual model',window:'Twelve months',start:'2025-01-01',end:'2026-01-01',initial:100,closing:112,source:'Synthetic index observations',payroll:1000000,merit:6,cola:4,market:0,promotion:0};
  const model=j.act('finance','scenario','scenario.new',input);assert.equal(model.realMovement,-1.79);assert.equal(model.annualCostNGN,100000);assert.throws(()=>j.act('finance','scenario','scenario.new',{...input,window:'Six months'}),/match/);
+});
+
+test('FBK-01/02/04 manager questionnaire, dual validation, expiry and confidential release boundaries',()=>{
+ const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;
+ const values={rater:'observer1',category:'Direct report',exposure:'Worked together all quarter'};
+ assert.throws(()=>j.doIt('manager',r,'nominate',values),/allow/);
+ j.doIt('employee',r,'nominate',values);
+ assert.throws(()=>j.doIt('employee',r,'nominate',values),/already/);
+ const a=list(j.s,'response').find(x=>x.reviewId===r.id);
+ assert.throws(()=>j.doIt('pm',a,'invite',{validation:'checked'}),/allow/);
+ j.doIt('manager',a,'endorse',{decision:'Endorse',reason:'Reporting line verified'});
+ j.doIt('pm',a,'invite',{validation:'No conflicts'});
+ j.doIt('observer1',a,'start');
+ const form=view(j.s,j.user('observer1'),{id:a.id}).detail.actions.find(x=>x.id==='response.submit');
+ assert.ok(form.fields.some(f=>f.key==='leadership'));
+ for(const id of ['employee','manager','finance','executive','auditor'])assert.throws(()=>view(j.s,j.user(id),{id:a.id}),/scope/);
+ j.s.liveCalendar=true;
+ assert.throws(()=>j.doIt('observer1',a,'submit',{},'2027-04-08T08:00:00Z'),/allow/);
+ processDeadlines(j.s,'2027-04-08T08:00:00Z');assert.equal(a.status,'Expired');
+ const c=list(j.s,'cycle').find(c=>c.id===r.cycleId);
+ assert.equal(view(j.s,j.user('pm'),{id:c.id}).detail.data.campaignProgress.Expired,1);
+ assert.equal(view(j.s,j.user('employee'),{id:c.id}).detail.data.campaignProgress,undefined);
+});
+
+test('FBK-03 manager weighting uses the four approved categories; raw comments stay in moderation',async()=>{
+ const {behaviourResult}=await import('../public/workspace/quarterly.mjs');
+ const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;
+ for(let i=5;i<=7;i++)j.s.users.push({id:'observer'+i,name:'Additional '+i,role:'employee',active:true});
+ const groups=[['manager','Manager',5],['observer1','Peer',4],['observer2','Peer',4],['observer3','Peer',4],
+ ['observer4','Direct report',3],['observer5','Direct report',3],['observer6','Direct report',3],['observer7','Stakeholder',2]];
+ for(const [id,category,rating] of groups){
+   j.doIt('employee',r,'nominate',{rater:id,category,exposure:'Quarterly working exposure'});
+   const a=list(j.s,'response').find(x=>x.rater===id);
+   j.doIt('manager',a,'endorse',{decision:'Endorse',reason:'Confirmed relationship'});
+   j.doIt('pm',a,'invite',{validation:'Checked conflicts'});
+   j.doIt(id,a,'submit',{improvement:rating,execution:rating,customerFocus:rating,integrity:rating,teamwork:rating,leadership:rating,example:'RESTRICTED COMMENT'});
+   j.doIt('pm',a,'moderate',{decision:'Valid',reason:'Quality verified'});
+ }
+ const b=behaviourResult({s:j.s},r);assert.equal(b.score,3.9);assert.equal(b.groups.length,4);
+ assert.throws(()=>view(j.s,j.user('finance'),{id:r.id}),/scope/);
+ for(const who of ['employee','manager','executive','auditor'])assert.doesNotMatch(JSON.stringify(view(j.s,j.user(who),{id:r.id}).detail),/RESTRICTED COMMENT/);
+});
+
+test('ORG-04 future transfers preserve a historic cycle roster and manager',async()=>{
+ const {rosterAt}=await import('../public/workspace/roster.mjs');
+ const j=journey(false),e=list(j.s,'employee')[0];
+ j.doIt('pm',e,'update',{name:e.title,email:e.email,company:e.company,department:'New unit',jobTitle:e.jobTitle,managerId:'manager',confirmed:'Yes',commercial:'No',peopleManager:'No',joinedAt:e.joinedAt,effective:'2027-01-01',grade:'G8'});
+ assert.equal(rosterAt(e,'2026-12-31').department,'Operations');
+ assert.equal(rosterAt(e,'2027-01-01').grade,'G8');
+ processDeadlines(j.s,'2027-01-02T10:00:00Z');assert.equal(e.department,'New unit');
+ assert.equal(list(j.s,'review')[0].snapshot.department,'Operations');
+});
+
+test('REW-03 commercial conversion requires an effective approved schedule',async()=>{
+ const {mappedRating}=await import('../public/workspace/commercial-mapping.mjs');const j=journey(false);
+ const m=j.act('finance','mapping','mapping.new',{title:'Field sales',effective:'2026-01-01',authority:'Synthetic authority',lower2:2,lower3:3,lower4:4,lower5:4.8});
+ const monthly={month:'2026-01-01',result:{score:3.9}};
+ assert.throws(()=>mappedRating(j.s,m.id,monthly),/published/);j.doIt('executive',m,'publish',{reference:'Approved'});
+ assert.equal(mappedRating(j.s,m.id,monthly),3);assert.throws(()=>mappedRating(j.s,m.id,{...monthly,month:'2025-12-01'}),/effective/);
 });

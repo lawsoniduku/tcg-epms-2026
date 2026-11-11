@@ -58,7 +58,7 @@ export const probationActions=[
   ...[1,3,5].map((month,index)=>action('probation.m'+month,'Record month '+month+' checkpoint',stage('Month '+month+' checkpoint',manager),()=>[
     pick('progress','Performance',['On track','At risk']),note('evidence','Progress and evidence'),note('support','Support delivered and next actions'),
     field('discussed','Discussion date','date'),note('response','Employee feedback')
-  ],(ctx,r,v)=>{need(v.discussed>=r.snapshot.joinedAt&&(!r.checkpoints.length||v.discussed>=r.checkpoints.at(-1).discussed),'Checkpoint dates must be chronological.');r.checkpoints.push({...v,month,by:ctx.actor.id});r.status=index<2?'Month '+[1,3,5][index+1]+' checkpoint':'Final assessment';return r;})),
+  ],(ctx,r,v)=>{if(ctx.s.liveCalendar)need(v.discussed>=r.dates[index]&&v.discussed<=isoDay(ctx.at),'Use an actual discussion date on or after the scheduled checkpoint.');need(v.discussed>=r.snapshot.joinedAt&&(!r.checkpoints.length||v.discussed>=r.checkpoints.at(-1).discussed),'Checkpoint dates must be chronological.');r.checkpoints.push({...v,month,by:ctx.actor.id});r.status=index<2?'Month '+[1,3,5][index+1]+' checkpoint':'Final assessment';return r;})),
   action('probation.assess','Submit confirmation recommendation',(ctx,r)=>['Final assessment','Extension review'].includes(r.status)&&manager(ctx,r),()=>[
     num('delivery','Delivery or commercial productivity (1–5)',1,5),num('capability','Capability (1–5)',1,5),num('behaviour','Behaviour and risk (1–5)',1,5),
     yes('critical','Critical breach or insufficient evidence'),pick('recommendation','Recommended outcome',['Confirm','Confirm with development','Extend','Non-confirmation']),
@@ -73,6 +73,7 @@ export const probationActions=[
     note('reason','Written reasons and communication plan'),field('reference','Decision authority'),field('effective','Decision effective date','date'),
     ...(r.assessment.recommendation==='Extend'?[num('months','Extension duration (months)',1,3,{integer:true}),note('extensionPlan','Evidence, support and review plan')]:[])
   ],(ctx,r,v)=>{
+    if(ctx.s.liveCalendar)need(isoDay(ctx.at)>=r.finalDue&&v.effective>=r.finalDue,'The contractual decision date has not been reached.');
     const outcome=r.assessment.recommendation;r.decisions??=[];r.decisions.push({...v,outcome,at:ctx.at,by:ctx.actor.id});
     if(outcome==='Extend'){need(!r.extensions,'Only one ordinary extension is permitted.');r.extensions++;r.finalDue=addMonths(r.finalDue,v.months);r.status='Extension review';}
     else{r.status='Closed';r.outcome=outcome;if(outcome.startsWith('Confirm')){const e=get(ctx.s,r.employeeId,'employee');e.confirmedFrom=v.effective;journal(ctx,e,'confirmation.effective',{effective:v.effective});}}
