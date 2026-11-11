@@ -15,5 +15,11 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install playwright==1.56.0
-      - run: python -m playwright install --with-deps chromium
-      - run: python test/browser/feedback.py
+      - name: Verify quarterly and half-year feedback in Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then
+            export CHROMIUM="$(command -v google-chrome)"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+          python test/browser/feedback.py
