@@ -37,6 +37,24 @@ try:
                 form.locator('button[type=submit]').click()
             assert submitted.value.ok, (user,verb,submitted.value.text())
             expect(page.locator('dialog')).not_to_be_visible()
+        for user, destination in [('employee','My performance'), ('manager','My team'), ('pm','Review management'), ('finance','Compensation approvals'), ('auditor','Audit & assurance')]:
+            page = page_for(user)
+            nav = page.get_by_role('navigation', name='Main navigation')
+            nav.get_by_role('link', name=destination, exact=True).click()
+            expect(nav.get_by_role('link', name=destination, exact=True)).to_have_class('nav-link active')
+            if user == 'employee':
+                expect(nav.get_by_role('link',name='Administration')).to_have_count(0)
+                page.get_by_role('link',name='360 feedback',exact=True).click()
+                expect(page.get_by_role('heading',name='360 feedback',exact=True)).to_be_visible()
+                page.go_back()
+                expect(page.get_by_role('heading',name='Performance reviews',exact=True)).to_be_visible()
+                page.set_viewport_size({'width':390,'height':844})
+                page.get_by_role('button',name='Open navigation').click()
+                nav.get_by_role('link',name='My tasks').click()
+                expect(page.get_by_role('heading',name='My tasks')).to_be_visible()
+                expect(nav).not_to_be_visible()
+                page.set_viewport_size({'width':1280,'height':800})
+        print('PASS role navigation, section links, browser history and mobile drawer',flush=True)
         for case in fixture['cases']:
             rid = case['id']
             raters = [('manager','Manager'),('observer1','Peer'),('observer2','Peer'),('observer3','Peer'),('observer4','Stakeholder')]

@@ -1,16 +1,46 @@
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog'),toast=document.querySelector('#toast');
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const groups=[
- ['Work',['home','inbox','review','response','commercial','sourceBatch','probation']],
- ['Decisions',['appeal','capability','recognition','merit','payBasis','meritException','scenario','talent','exception']],
- ['Management',['employee','strategy','template','mapping','policy','cadence','cycle','track','batch','migration','cutover','reports','audit','accounts']]
-];
-const extra={home:'Overview',inbox:'My work',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
+const extra={home:'Home',inbox:'My tasks',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
+const reviewPages=['review','response','commercial','probation'];
+const outcomePages=['appeal','capability','recognition','talent','exception'];
+const rewardPages=['merit','payBasis','meritException','scenario'];
+const setupPages=['cycle','cadence','strategy','template','track','policy','mapping','batch','migration','cutover','accounts'];
+const icons={
+ home:'M3 10l9-7 9 7v11h-6v-7H9v7H3z', inbox:'M3 5h18v14H3z M3 12h5l2 3h4l2-3h5',
+ reviews:'M5 4h14v17H5z M8 9h8 M8 13h8 M8 17h5', team:'M3 21v-2a6 6 0 0 1 12 0v2 M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M16 6a3 3 0 0 1 0 6 M18 15a5 5 0 0 1 3 5',
+ outcomes:'M4 20v-6l6-5 4 2 6-8 M15 3h5v5', rewards:'M3 8h18v5H3z M5 13v8h14v-8 M12 8v13 M12 8C5 8 6 2 9 3l3 5c7 0 6-6 3-5z',
+ reports:'M4 3v17h17 M8 16v-4 M13 16V6 M18 16v-7', setup:'M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M9 15v6',
+ audit:'M12 2l8 4v6c0 5-4 8-8 10-4-2-8-5-8-10V6z M8 12l3 3 5-6'
+};
+function navigation(){
+ const role=state.actor.role;
+ const group=(title,icon,keys)=>({title,icon,keys:keys.filter(permitted)});
+ const reviews=group(({employee:'My performance',manager:'Team performance',hod:'Function performance',pm:'Review management',executive:'Performance oversight',sales:'Commercial performance'})[role]??'Performance','reviews',
+   role==='sales'?['sourceBatch','commercial','mapping',...reviewPages.filter(k=>k!=='commercial')]:
+   [...reviewPages,...(role==='pm'?['cycle','cadence','batch']:[])]);
+ const people=group(({employee:'My profile',manager:'My team',hod:'My function'})[role]??'People','team',['employee']);
+ const outcomes=group(role==='er'?'Employee relations':role==='talent'?'Talent management':'Performance outcomes','outcomes',
+   role==='talent'?['talent','recognition','capability','appeal','exception']:role==='er'?['capability','appeal','exception','recognition','talent']:outcomePages);
+ const rewards=group(role==='finance'?'Compensation approvals':'Compensation','rewards',rewardPages);
+ const insights=group('Analytics','reports',['reports']);
+ const auditGroup=group('Audit & assurance','audit',['audit']);
+ const groups=({finance:[rewards,insights,reviews,people,outcomes],auditor:[auditGroup,insights,reviews,people,outcomes,rewards],
+   er:[outcomes,people,reviews,rewards,insights],talent:[outcomes,people,reviews,insights,rewards],
+   executive:[insights,reviews,rewards,outcomes,people],manager:[people,reviews,outcomes,insights,rewards],hod:[people,reviews,insights,outcomes,rewards]
+ })[role]??[reviews,people,outcomes,rewards,insights];
+ if(!groups.includes(auditGroup))groups.push(auditGroup);
+ const assigned=new Set(groups.flatMap(g=>g.keys));
+ const setup=group(['admin','pm'].includes(role)?'Administration':'Resources','setup',
+   ['sourceBatch',...setupPages].filter(k=>!assigned.has(k)));
+ if(role==='admin')groups.unshift(setup);else groups.push(setup);
+ return groups.filter(g=>g.keys.length);
+}
+function navIcon(key){return '<svg aria-hidden="true" viewBox="0 0 24 24" class="nav-icon"><path d="'+icons[key]+'"/></svg>';}
 const friendly={employeeId:'Employee',cycleId:'Cycle',policyId:'Policy version',reviewId:'Appraisal',source:'Source',qa:'Quality review',cpiStart:'Starting CPI index',cpiEnd:'Closing CPI index',poolKobo:'Budget (kobo)',proposedKobo:'Proposed annual increase (kobo)',awardKobo:'Approved annual increase (kobo)',supervisorScore:'Submitted supervisor score',calibratedScore:'Approved calibration score',by:'Recorded by',at:'Recorded at',reference:'Reference',kind:'Type',id:'Reference',status:'Status'};
 const label=k=>friendly[k]??(k.replace(/([a-z])([A-Z])/g,'$1 $2').replaceAll('_',' ').replace(/^./,c=>c.toUpperCase()));
 let info,state,csrf,section='home',selected='',query='',filter='All',department='All',cycle='All',manager='All',currentForm=null,working=false,menuOpen=false;
 let accounts=null,files=[];
-const navLabel=k=>state?.sections[k]??extra[k]??label(k);
+const navLabel=k=>({review:'Performance reviews',response:'360 feedback',employee:({employee:'My profile',manager:'Direct reports',hod:'Function directory'})[state?.actor.role]??'Employee directory'})[k]??state?.sections[k]??extra[k]??label(k);
 const fmtDate=value=>new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Lagos'}).format(new Date(value));
 function say(message,error=false){toast.textContent=message;toast.className='show '+(error?'error':'');clearTimeout(say.timer);say.timer=setTimeout(()=>toast.className='',5500);}
 async function api(path,values){
@@ -19,7 +49,9 @@ async function api(path,values){
 }
 function button(title,attributes,secondary=false){return '<button class="button '+(secondary?'secondary':'')+'" '+attributes+'>'+escape(title)+'</button>';}
 function permitted(k){
- if(['home','inbox','reports'].includes(k))return true;
+ if(['home','inbox'].includes(k))return true;
+ if(k==='reports')return ['manager','hod','executive','finance','pm','auditor','er','talent'].includes(state.actor.role);
+ if(['employee','manager','hod','pm'].includes(state.actor.role)&&['review','response','employee'].includes(k))return true;
  if(k==='accounts')return state.actor.role==='admin'&&info.mode==='live';
  if(k==='audit')return !!state.audit;
  return (state.rows[k]?.length??0)>0||(state.available[k]?.length??0)>0;
@@ -43,8 +75,26 @@ function valueView(value,depth=0){
 }
 const tag=s=>'<span class="pill '+(/Closed|Published|Approved|Released|Acknowledged|Reconciled/.test(s)?'teal':/Pending|review|approval|Approval|Nomination/.test(s)?'amber':'blue')+'">'+escape(s)+'</span>';
 function logo(){return '<div class="brand"><span class="brand-symbol">TCG</span><span class="brand-name">THE CONCEPT<br>GROUP</span></div>';}
-async function reload(){state=await api('view'+(selected?'?id='+encodeURIComponent(selected):''));csrf=state.csrf??csrf;files=selected&&info.evidence?(await api('files?entity='+encodeURIComponent(selected))).files:[];if(section==='accounts')accounts=await api('accounts');render();}
-function go(type,id=''){section=type;selected=id;query='';filter=department=cycle=manager='All';menuOpen=false;location.hash=type+(id?'/'+id:'');reload().catch(e=>say(e.message,true));}
+let requestVersion=0;
+async function reload(){
+ const version=++requestVersion;
+ let view;
+ try{view=await api('view'+(selected?'?id='+encodeURIComponent(selected):''));}
+ catch(e){if(version!==requestVersion)return;if(selected&&[403,404].includes(e.status)){selected='';history.replaceState(null,'','#'+section);return reload();}throw e;}
+ if(version!==requestVersion)return;
+ state=view;csrf=view.csrf??csrf;
+ if(!permitted(section)||(selected&&view.detail?.type!==section)){
+   section='home';selected='';history.replaceState(null,'','#home');
+ }
+ const attachments=selected&&info.evidence?(await api('files?entity='+encodeURIComponent(selected))).files:[];
+ const users=section==='accounts'?await api('accounts'):null;
+ if(version!==requestVersion)return;
+ files=attachments;accounts=users;render();
+}
+function go(type,id=''){
+ section=type;selected=id;query='';filter=department=cycle=manager='All';menuOpen=false;
+ location.hash=type+(id?'/'+id:'');reload().then(()=>document.querySelector('#main')?.focus({preventScroll:true})).catch(e=>say(e.message,true));
+}
 function login(){state=null;selected='';section='home';
  app.innerHTML='<div class="login-page"><section class="login-intro">'+logo()+'<div><div class="login-line"></div><h1>Performance<br>Management</h1><p>The Concept Group · People & Culture</p></div><footer>Employee, manager and HR workspace</footer></section><main class="login-form" id="main"><div class="login-inner"><h2>'+ (info.mode==='live'?'Sign in':'Open your workspace')+'</h2><p>'+(info.mode==='live'?'Use your organisation account.':'Choose a role to work through the appraisal cycle using fictional records.')+'</p><form id="signin">'+(info.mode==='live'?'<div class="field"><label for="email">Work email</label><input id="email" name="email" type="email" autocomplete="username" required></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>':'<div class="field"><label for="user">Acceptance role</label><select id="user" name="userId">'+info.users.map(u=>'<option value="'+escape(u.id)+'" '+(u.role==='pm'?'selected':'')+'>'+escape(u.name)+'</option>').join('')+'</select></div>')+'<p class="form-error" role="alert"></p><button class="button" type="submit">Open workspace</button></form>'+(info.ssoUrl?'<a class="button secondary" href="'+escape(info.ssoUrl)+'">Company sign-in</a>':'')+'</div></main></div>';
 }
@@ -59,7 +109,7 @@ function rowTable(rows,type){
 const flat=()=>Object.entries(state.rows).flatMap(([type,rs])=>rs.map(r=>({...r,type})));
 function home(){
  const reviews=state.rows.review??[],open=reviews.filter(r=>!['Closed','Approved exception'].includes(r.status)),todo=flat().filter(r=>r.actionCount&& !['Closed','Published','Approved','Active','Applied','Reconciled'].includes(r.status)).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
- return heading('Performance overview',state.actor.name+' · '+state.roles[state.actor.role])+grid([['Quarterly appraisals',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+rowTable(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Quarterly appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
+ return heading(({employee:'My performance',manager:'Team overview',hod:'Function overview',finance:'Compensation overview',auditor:'Audit overview',er:'Employee relations overview',talent:'Talent overview'})[state.actor.role]??'Performance overview',state.actor.name+' · '+state.roles[state.actor.role])+grid([['Performance reviews',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+rowTable(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Quarterly appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
 }
 function filterSelect(id,title,values,selected){return '<select aria-label="'+escape(title)+'" id="'+id+'"><option value="All">'+escape(title)+'</option>'+[...new Set(values.filter(Boolean))].sort().map(x=>'<option '+(selected===x?'selected':'')+'>'+escape(x)+'</option>').join('')+'</select>';}
 function filtered(){let rs=section==='inbox'?flat().filter(r=>r.actionCount):state.rows[section]??[];return rs.filter(r=>(filter==='All'||r.status===filter)&&(department==='All'||r.department===department)&&(cycle==='All'||r.cycle===cycle)&&(manager==='All'||r.manager===manager)&&(r.title+' '+r.employee+' '+r.department).toLowerCase().includes(query.toLowerCase()));}
@@ -115,7 +165,17 @@ function accountsPage(){return heading('User accounts','Provision and deactivate
 function roleSelector(){const roles=state.actor.grantedRoles??[];return roles.length>1?'<select id="active-role" aria-label="Active role">'+roles.map(k=>'<option value="'+escape(k)+'" '+(k===state.actor.role?'selected':'')+'>'+escape(state.roles[k])+'</option>').join('')+'</select>':'';}
 function render(){
  const content=selected?detail():section==='home'?home():section==='reports'?reports():section==='audit'?audit():section==='accounts'?accountsPage():listing();
- app.innerHTML='<div class="shell '+(menuOpen?'menu-open':'')+'"><aside class="sidebar">'+logo()+'<div class="sidebar-scroll">'+groups.map(([title,keys])=>{const visible=keys.filter(permitted);return visible.length?'<details class="nav-group" '+(visible.includes(section)||title==='Work'?'open':'')+'><summary>'+escape(title)+'</summary><nav class="nav">'+visible.map(k=>'<button data-nav="'+k+'" class="'+(k===section?'active':'')+'">'+escape(navLabel(k))+'</button>').join('')+'</nav></details>':'';}).join('')+'</div><div class="side-bottom"><button class="text-btn" data-signout>Sign out</button></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-menu aria-label="Toggle navigation">☰</button>People & Culture <span>/</span> <strong>'+escape(navLabel(section))+'</strong></div><div class="user-top">'+roleSelector()+'<div class="avatar">'+escape(state.actor.name.split(' ').slice(0,2).map(n=>n[0]).join(''))+'</div><div class="user-info"><strong>'+escape(state.actor.name)+'</strong><small>'+escape(state.roles[state.actor.role])+'</small></div></div></header>'+(info.mode!=='live'?'<div class="demo-banner">Acceptance workspace · Fictional employee records</div>':'')+'<main id="main" class="content">'+content+'</main></div></div>';
+ const groups=navigation(),current=groups.find(g=>g.keys.includes(section));
+ const link=(key,title,ic,active)=>'<a href="#'+key+'" class="nav-link '+(active?'active':'')+'" '+(active?'aria-current="'+(key===section?'page':'location')+'"':'')+'>'+navIcon(ic)+escape(title)+'</a>';
+ const tabs=current&&current.keys.length>1?'<nav class="section-tabs" aria-label="'+escape(current.title)+'">'+current.keys.map(k=>'<a href="#'+k+'" '+(k===section?'aria-current="page"':'')+'>'+escape(navLabel(k))+'</a>').join('')+'</nav>':'';
+ const sidebar='<aside id="primary-sidebar" class="sidebar">'+logo()+'<button class="drawer-close" data-menu aria-label="Close navigation">×</button><nav class="sidebar-scroll" aria-label="Main navigation">'+
+   link('home','Home','home',section==='home')+link('inbox','My tasks','inbox',section==='inbox')+
+   '<div class="nav-caption">'+escape(state.roles[state.actor.role])+'</div>'+groups.map(g=>link(g.keys[0],g.title,g.icon,g===current)).join('')+
+   '</nav><div class="side-bottom"><button class="text-btn" data-signout>Sign out</button></div></aside>';
+ app.innerHTML='<div class="shell '+(menuOpen?'menu-open':'')+'">'+sidebar+(menuOpen?'<button class="drawer-shade" data-menu aria-label="Dismiss navigation"></button>':'')+
+   '<div class="workspace"><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-menu aria-label="Open navigation" aria-controls="primary-sidebar" aria-expanded="'+menuOpen+'">☰</button><span>Performance</span><span>/</span><strong>'+escape(current?.title??navLabel(section))+'</strong></div><div class="user-top">'+roleSelector()+'<div class="avatar">'+escape(state.actor.name.split(' ').slice(0,2).map(n=>n[0]).join(''))+'</div><div class="user-info"><strong>'+escape(state.actor.name)+'</strong><small>'+escape(state.roles[state.actor.role])+'</small></div></div></header>'+
+   (info.mode!=='live'?'<div class="demo-banner">Acceptance workspace · Fictional employee records</div>':'')+tabs+'<main id="main" tabindex="-1" class="content">'+content+'</main></div></div>';
+
 }
 function input(f){
  const id='f-'+f.key,attrs=' name="'+escape(f.key)+'" id="'+escape(id)+'" '+(f.optional?'':'required')+' ';
@@ -139,9 +199,11 @@ async function download(report){
  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=report+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 document.addEventListener('click',async e=>{
+ const route=e.target.closest('.nav-link,.section-tabs a');
+ if(route&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey){e.preventDefault();if(!working)go(route.hash.slice(1));return;}
  const b=e.target.closest('button');if(!b||working)return;
  try{
-  if(b.hasAttribute('data-menu')){menuOpen=!menuOpen;render();}
+  if(b.hasAttribute('data-menu')){menuOpen=!menuOpen;render();document.querySelector(menuOpen?'.drawer-close':'.mobile-menu')?.focus();}
   else if(b.hasAttribute('data-signout')){await api('logout',{});location.hash='';login();}
   else if(b.dataset.nav)go(b.dataset.nav);
   else if(b.dataset.record)go(b.dataset.type,b.dataset.record);
@@ -174,5 +236,14 @@ document.addEventListener('submit',async e=>{
   }
  }catch(err){form.querySelector('.form-error').textContent=err.message;}finally{working=false;if(submit.isConnected)submit.disabled=false;}
 });
-window.addEventListener('hashchange',()=>{if(!state)return;const [type,id]=location.hash.slice(1).split('/');if(type&&(section!==type||selected!==(id??''))){section=permitted(type)?type:'home';selected=id??'';reload().catch(e=>say(e.message,true));}});
+document.addEventListener('keydown',e=>{
+ if(e.key==='Escape'&&menuOpen){menuOpen=false;render();document.querySelector('.mobile-menu')?.focus();}
+});
+window.addEventListener('hashchange',()=>{
+ if(!state||location.hash==='#main')return;
+ const [type='home',id='']=location.hash.slice(1).split('/');
+ if(section===(type||'home')&&selected===id)return;
+ section=type||'home';selected=id;menuOpen=false;query='';filter=department=cycle=manager='All';
+ reload().catch(e=>say(e.message,true));
+});
 try{info=await api('info');try{const [type,id]=location.hash.slice(1).split('/');section=type||'home';selected=id??'';await reload();}catch(e){if(e.status===401)login();else throw e;}}catch(e){app.innerHTML='<main class="loading" id="main"><h1>Workspace unavailable</h1><p>'+escape(e.message)+'</p></main>';}
