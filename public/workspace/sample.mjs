@@ -1,5 +1,6 @@
 import {emptyState,roles} from './model.mjs';
 import {execute} from './engine.mjs';
+const yearBeforeTransition=start=>start<'2026-01-01';
 export function sampleState({history=true}={}) {
   const s=emptyState();
   s.users=Object.entries(roles).map(([role,name])=>({id:role,name,role,department:'Operations',active:true}));
@@ -14,7 +15,7 @@ export function sampleState({history=true}={}) {
   const ada=employee('T001','Ada Okeke','Yes','No');s.users.find(u=>u.id==='employee').employeeId=ada.id;
   const sales=employee('T002','Tunde Adeyemi','Yes','Yes');const probation=employee('T003','Zainab Bello','No','No');
   s.users.push({id:'commercial-employee',employeeId:sales.id,role:'employee',name:'Tunde · employee',department:'Operations',active:true},{id:'probation-employee',employeeId:probation.id,role:'employee',name:'Zainab · employee',department:'Operations',active:true});
-  const p=act('pm','policy','policy.new',{title:'Illustrative policy for acceptance testing',effective:'2025-01-01',authority:'SYNTHETIC-UAT',weight0:20,weight1:20,weight2:50,weight3:10,fallback:'Redistribute across valid observer categories',quarterlyEvidence:'Approved documented manager observations',freshness:100,holidays:'',allowDeduction:'No',deductionCap:0,deductionFloor:1,deductionBasis:'',appealDays:5});
+  const p=act('pm','policy','policy.new',{title:'Illustrative policy for acceptance testing',effective:'2025-01-01',authority:'SYNTHETIC-UAT',weight0:20,weight1:20,weight2:50,weight3:10,freshness:100,holidays:'',allowDeduction:'No',appealDays:5});
   act('executive','policy','policy.publish',{reference:'SYNTHETIC-EXEC'},p);
   let parent='ROOT';
   for(const [i,level] of ['Group','Business unit','Department','Team','Individual'].entries()){
@@ -25,7 +26,9 @@ export function sampleState({history=true}={}) {
   periods.push(['2026 Q4','2026-10-01','2026-12-31']);
   for(const [title,start,end] of periods){
     const after=days=>{const d=new Date(end+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);};
-    const c=act('pm','cycle','cycle.new',{title,start,end,policyId:p.id,behaviourMode:'Documented observations',selfDue:end,managerDue:after(7),calibrationDue:after(14),closeDue:after(21)});
+    const c=act('pm','cycle','cycle.new',{title,start,end,policyId:p.id,behaviourMode:'Full 360',selfDue:end,managerDue:after(7),calibrationDue:after(14),closeDue:after(21)});
+    // Closed historical fixtures preserve the policy that governed their original review.
+    if(yearBeforeTransition(start)){c.scoringVersion='legacy';c.behaviourMode='Documented observations';}
     act('pm','cycle','cycle.open',{},c);
     const r=s.records.find(x=>x.type==='review'&&x.cycleId===c.id);
     if(title==='2026 Q4')continue;

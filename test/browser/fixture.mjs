@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {openPlatform} from '../../server/platform-db.mjs';
 import {platformHttp} from '../../server/platform-http.mjs';
+import {competencyBank} from '../../public/workspace/feedback.mjs';
 import {execute} from '../../public/workspace/engine.mjs';
 import {list} from '../../public/workspace/model.mjs';
 
@@ -17,11 +18,13 @@ const fixtures=store.change(s=>{
   },'2026-11-11T10:00:00Z');
   const cases=[];
   for(const [year,isLead] of [[2098,false],[2099,true]]){
-    const result=act('pm','cycle','new',{title:'Browser acceptance '+year,start:year+'-01-01',end:year+'-03-31',policyId:list(s,'policy')[0].id,behaviourMode:'Full 360'});
-    const cycle=s.records.find(c=>c.id===result.id);
+    const result=act('pm','cadence','new',{year,frequency:isLead?'Biannual':'Quarterly',policyId:list(s,'policy')[0].id,reason:'Acceptance exercise',targetBasis:'Period totals',authority:'Synthetic approval'});
+    const schedule=s.records.find(item=>item.id===result.id);
+    act('pm','cadence','activate',{approval:'Synthetic PM lead approval'},schedule);
+    const cycle=list(s,'cycle').find(c=>c.cadenceId===schedule.id);
     act('pm','cycle','open',{},cycle);
     const review=list(s,'review').find(r=>r.cycleId===cycle.id&&r.employeeId===staff.id);
-    review.snapshot.peopleManager=isLead;
+    review.snapshot.peopleManager=isLead;review.campaign.questions=competencyBank(isLead);
     const baseline=list(s,'review').find(r=>r.status==='Closed').baseline;
     for(const [i,g] of baseline.goals.entries()){
       const {id,anchors,...definition}=g;

@@ -51,14 +51,14 @@ export function finalisationPreview(appraisal, input, policy) {
   if (deduction > 0) {
     requireThat(policy.mode === 'controlled', 'Deductions are disabled pending management authorisation.');
     requireThat(policy.approvalReference && policy.approvedBy && policy.tracks?.includes(appraisal.track), 'A complete approved deduction configuration is required.');
-    requireThat(typeof policy.maxPoints === 'number' && typeof policy.floor === 'number', 'Approved deduction limits are missing.');
-    requireThat(deduction <= hundredths(policy.maxPoints), 'Deduction exceeds the approved cap.');
+    if(!policy.manualPoints)requireThat(typeof policy.maxPoints === 'number' && typeof policy.floor === 'number', 'Approved deduction limits are missing.');
+    if(!policy.manualPoints)requireThat(deduction <= hundredths(policy.maxPoints), 'Deduction exceeds the approved cap.');
     requireThat(String(input.reason ?? '').trim().length > 0, 'A reason is required for a nonzero deduction.');
-    requireThat(String(input.basis ?? '').trim().length > 0, 'A policy or provisional event basis is required.');
+    if(!policy.manualPoints)requireThat(String(input.basis ?? '').trim().length > 0, 'A policy or provisional event basis is required.');
     if (policy.evidenceRequired) requireThat(String(input.evidence ?? '').trim(), 'An evidence reference is required.');
-    requireThat(base - deduction >= scoreValue(policy.floor), 'Deduction would take the score below the approved floor.');
+    if(!policy.manualPoints)requireThat(base - deduction >= scoreValue(policy.floor), 'Deduction would take the score below the approved floor.');
   }
-  const finalScore = (base - deduction) / 100;
+  const finalScore = (policy.manualPoints ? Math.max(100,base-deduction) : base-deduction) / 100;
   return { baseScore: base / 100, deductionPoints: deduction / 100, finalScore, finalRating: ratingFor(finalScore) };
 }
 export function aggregateFeedback(categories, rule) {

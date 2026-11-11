@@ -8,7 +8,7 @@ export const roles = {
 };
 export const sections = {
   employee:'Employees', policy:'Policy versions', strategy:'Strategy', cycle:'Review cycles',
-  review:'Quarterly appraisals', response:'360 feedback', commercial:'Commercial reviews',
+  review:'Formal appraisals', response:'360 feedback', commercial:'Commercial reviews',
   probation:'Confirmation', appeal:'Appeals', capability:'Capability and conduct', merit:'Merit reviews',
   talent:'Talent reviews', exception:'Exceptions', batch:'CSV deductions'
 };
@@ -141,6 +141,7 @@ export function activePolicy(s) {
 }
 export function nextStatus(r,status,ctx,recipient,message) {r.status=status;if(recipient)notify(ctx,r,recipient,message??status);}
 export function evidenceScore(actual,kpi,stretch) {
+  if(kpi.direction==='Binary outcome'){need(actual===0||actual===1,'Use 0 for fail or 1 for pass.');return kpi.anchors[actual];}
   if(kpi.direction==='Higher is better'){
     need(kpi.target>0,'A positive target is required.');
     const attainment=actual/kpi.target*100;

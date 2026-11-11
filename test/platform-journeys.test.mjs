@@ -34,22 +34,22 @@ test('Track A from authored KPIs and 360 observations through independent calibr
  for(const g of r.goals){self['score_'+g.id]=5;self['note_'+g.id]='Documented contribution';actual['actual_'+g.id]=110;actual['evidence_'+g.id]='Validated measurement';actual['stretch_'+g.id]='No';actual['rationale_'+g.id]='Verified output exceeded the agreed threshold';}
  j.doIt('employee',r,'self',self);feedback(j,r,'manager','Manager');const peer=feedback(j,r,'observer1','Peer');feedback(j,r,'observer2','Peer');feedback(j,r,'observer3','Peer');feedback(j,r,'observer4','Stakeholder');
  assert.throws(()=>view(j.s,j.user('employee'),{id:peer.id}),/scope/);
- j.doIt('manager',r,'assess',actual);assert.equal(r.supervisorScore,4);assert.equal(r.assessment.behaviour.groups.find(x=>x.category==='Peer').score,4);
+ j.doIt('manager',r,'assess',actual);assert.equal(r.supervisorScore,4);assert.equal(r.assessment.behaviour.method,'Equal individual raters');
  assert.throws(()=>j.doIt('hod',r,'calibrate',{score:5}),/allow/);
  j.doIt('pm',r,'panel',{chair:'hod',members:'Panel',mandate:'Mandate',conflicts:'No conflicts'});
  j.doIt('hod',r,'calibrate',{score:4.55,reason:'Additional verified evidence',evidence:'E1',members:'Panel',consequential:'Yes'});
  assert.throws(()=>j.doIt('pm',r,'lock',{}),/allow/);
  j.doIt('executive',r,'moderate',{reason:'Panel evidence confirmed',evidence:'E2'});j.doIt('pm',r,'lock',{reason:'',evidence:''});
  assert.equal(view(j.s,j.user('employee'),{id:r.id}).detail.data.finalScore,undefined);
- assert.throws(()=>j.doIt('pm',r,'release'),/feedback/);j.doIt('pm',r,'feedbackThemes',{Peer:'Supports cross-team delivery',check:'Reviewed and safe to release'});
- j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.feedback.categories.find(g=>g.category==='Peer').summary,'Supports cross-team delivery');assert.equal(employeeView.data.calibrations,undefined);
+ assert.throws(()=>j.doIt('pm',r,'release'),/feedback/);j.doIt('pm',r,'feedbackThemes',{strengths:'Supports cross-team delivery',check:'Reviewed and safe to release'});
+ j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.feedback.strengths,'Supports cross-team delivery');assert.equal(employeeView.data.calibrations,undefined);
  j.doIt('manager',r,'conversation',{discussion:'Reviewed contribution',owner:'Manager',due:'2027-05-01'});j.doIt('employee',r,'ack',{comment:'Received'});j.doIt('pm',r,'close',{development:'Coaching plan'});assert.equal(r.status,'Closed');
  assert.match(exportData(j.s,j.user('auditor'),'scores'),/4\.55/);
 });
-test('360 suppresses a two-rater cohort and requires an approved fallback for missing categories',async()=>{
+test('360 blocks an insufficient anonymous pool and accepts a sufficient pool without category quotas',async()=>{
  const {behaviourResult}=await import('../public/workspace/quarterly.mjs');const j=journey(false),r=new360(j);goalSet(j,r);feedback(j,r,'manager','Manager');feedback(j,r,'observer1','Peer');feedback(j,r,'observer2','Peer');
- const ctx={s:j.s,actor:j.user('manager')};assert.deepEqual(behaviourResult(ctx,r).groups.map(g=>g.category),['Manager']);
- list(j.s,'cycle').find(c=>c.id===r.cycleId).policy.fallback='Require additional raters';assert.throws(()=>behaviourResult(ctx,r),/More valid responses/);
+ const ctx={s:j.s,actor:j.user('manager')};assert.throws(()=>behaviourResult(ctx,r),/360_DATA_PENDING/);
+ feedback(j,r,'observer3','Peer');assert.equal(behaviourResult(ctx,r).score,4);
 });
 test('deadline advancement, alternate reviewer and prospective amendments preserve historical baseline',()=>{
  const j=journey(false),r=list(j.s,'review')[0];goalSet(j,r);const old=r.goals[0].target;
@@ -140,7 +140,7 @@ test('inflation scenarios require matching CPI periods and distinguish purchasin
 });
 
 test('FBK-01/02/04 manager questionnaire, dual validation, expiry and confidential release boundaries',()=>{
- const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;
+ const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;r.campaign.questions.push(['leadership','People leadership']);
  const values={rater:'observer1',category:'Direct report',exposure:'Worked together all quarter'};
  assert.throws(()=>j.doIt('manager',r,'nominate',values),/allow/);
  j.doIt('employee',r,'nominate',values);
@@ -161,9 +161,9 @@ test('FBK-01/02/04 manager questionnaire, dual validation, expiry and confidenti
  assert.equal(view(j.s,j.user('employee'),{id:c.id}).detail.data.campaignProgress,undefined);
 });
 
-test('FBK-03 manager weighting uses the four approved categories; raw comments stay in moderation',async()=>{
+test('FBK-03 people managers use equal votes across four participating categories; raw comments stay in moderation',async()=>{
  const {behaviourResult}=await import('../public/workspace/quarterly.mjs');
- const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;
+ const j=journey(false),r=new360(j);goalSet(j,r);r.snapshot.peopleManager=true;r.campaign.questions.push(['leadership','People leadership']);
  for(let i=5;i<=7;i++)j.s.users.push({id:'observer'+i,name:'Additional '+i,role:'employee',active:true});
  const groups=[['manager','Manager',5],['observer1','Peer',4],['observer2','Peer',4],['observer3','Peer',4],
  ['observer4','Direct report',3],['observer5','Direct report',3],['observer6','Direct report',3],['observer7','Stakeholder',2]];
@@ -175,7 +175,7 @@ test('FBK-03 manager weighting uses the four approved categories; raw comments s
    j.doIt(id,a,'submit',{improvement:rating,execution:rating,customerFocus:rating,integrity:rating,teamwork:rating,leadership:rating,example:'RESTRICTED COMMENT'});
    j.doIt('pm',a,'moderate',{decision:'Valid',reason:'Quality verified'});
  }
- const b=behaviourResult({s:j.s},r);assert.equal(b.score,3.9);assert.equal(b.groups.length,4);
+ const b=behaviourResult({s:j.s},r);assert.equal(b.score,3.5);assert.equal(b.groups,undefined);
  assert.throws(()=>view(j.s,j.user('finance'),{id:r.id}),/scope/);
  for(const who of ['employee','manager','executive','auditor'])assert.doesNotMatch(JSON.stringify(view(j.s,j.user(who),{id:r.id}).detail),/RESTRICTED COMMENT/);
 });
@@ -196,4 +196,46 @@ test('REW-03 commercial conversion requires an effective approved schedule',asyn
  const monthly={month:'2026-01-01',result:{score:3.9}};
  assert.throws(()=>mappedRating(j.s,m.id,monthly),/published/);j.doIt('executive',m,'publish',{reference:'Approved'});
  assert.equal(mappedRating(j.s,m.id,monthly),3);assert.throws(()=>mappedRating(j.s,m.id,{...monthly,month:'2025-12-01'}),/effective/);
+});
+
+test('v4.2 CAD-01 to CAD-07: future rerun replaces only drafts; launched reviews keep their own campaign',()=>{
+ const j=journey(false);
+ const config={year:2028,frequency:'Quarterly',policyId:list(j.s,'policy')[0].id,authority:'Approved policy change',reason:'Formal review schedule',targetBasis:'Whole period'};
+ const first=j.act('pm','cadence','cadence.new',config);
+ j.doIt('pm',first,'activate',{approval:'PM lead'});assert.equal(first.preview.formalPeriods,4);
+ const change=j.act('pm','cadence','cadence.new',{...config,frequency:'Biannual'});
+ assert.equal(change.preview.replacedDrafts,4);
+ j.doIt('pm',change,'activate',{approval:'PM lead'});
+ const periods=list(j.s,'cycle').filter(c=>c.cadenceId===change.id);
+ assert.deepEqual(periods.map(c=>[c.start,c.end]),[['2028-01-01','2028-06-30'],['2028-07-01','2028-12-31']]);
+ for(const c of periods)j.doIt('pm',c,'open');
+ const campaigns=list(j.s,'review').filter(r=>periods.some(c=>c.id===r.cycleId)).map(r=>r.campaign);
+ assert.equal(new Set(campaigns.map(c=>c.id)).size,2);
+ assert.ok(campaigns.every(c=>c.cadence==='Biannual'&&c.questions.length===5));
+ assert.throws(()=>j.act('pm','cadence','cadence.new',config),/LOCKED/);
+});
+test('v4.2 UAT-360-05/08: four independent observers with 5,4,3,4 contribute exactly one vote each',async()=>{
+ const {behaviourResult}=await import('../public/workspace/quarterly.mjs');
+ const j=journey(false),r=new360(j);goalSet(j,r);
+ for(const [id,category,score] of [['manager','Manager',5],['observer1','Peer',4],['observer2','Peer',3],['observer3','Peer',4]]){
+   j.doIt('employee',r,'nominate',{rater:id,category,exposure:'Direct observation during this period'});
+   const assignment=list(j.s,'response').find(x=>x.rater===id);
+   j.doIt('manager',assignment,'endorse',{decision:'Endorse',reason:'Worked together'});j.doIt('pm',assignment,'invite',{validation:'Checked'});
+   j.doIt(id,assignment,'submit',{improvement:score,execution:'NOT_OBSERVED',customerFocus:score,integrity:score,teamwork:score});
+   j.doIt('pm',assignment,'moderate',{decision:'Valid',reason:'Direct observations'});
+ }
+ const result=behaviourResult({s:j.s},r);assert.equal(result.score,4);assert.equal(result.groups,undefined);
+ assert.ok(!result.competencies.find(c=>c.competency==='Efficiency and execution'));
+});
+test('v4.2 UAT-FIN-04/05: unchanged supervisor base locks after cohort signoff; manual deduction floors at one',()=>{
+ const j=journey(false),r=new360(j),cycle=list(j.s,'cycle').find(c=>c.id===r.cycleId);
+ // Exercise finalisation at its input boundary using independently submitted numeric scores.
+ r.status='Calibration';r.supervisorScore=4.2;r.assessment={behaviour:{source:'360 feedback'}};
+ j.doIt('pm',cycle,'completeCalibration',{reference:'Signed panel minute'});
+ j.doIt('pm',r,'lock',{reason:'',evidence:''});assert.equal(r.revisions.at(-1).finalScore,4.2);
+ const {id}=r;Object.assign(r,{status:'Finalisation',supervisorScore:1.1,calibratedScore:1.1});
+ cycle.policy.allowDeduction='Yes';
+ assert.throws(()=>j.doIt('pm',r,'lock',{deduction:.5,reason:'  '}),/reason/);
+ j.doIt('pm',r,'lock',{deduction:.5,reason:'Authorised case adjustment'});
+ assert.equal(r.revisions.at(-1).finalScore,1);assert.equal(r.revisions.at(-1).deductionPoints,.5);
 });

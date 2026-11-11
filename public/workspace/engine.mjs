@@ -1,3 +1,4 @@
+import {newCadence,cadenceActions} from './cadence.mjs';
 import {operationsRows,outcomeTrends} from './reporting.mjs';
 import {createMapping,mappingActions} from './commercial-mapping.mjs';
 import {rosterAt} from './roster.mjs';
@@ -15,6 +16,7 @@ const newRecognition=action('recognition.new','Nominate for recognition',ctx=>is
   field('title','Recognition'),note('impact','Evidence of contribution'),field('owner','Recognition owner')
 ],(ctx,r,v)=>{const a=get(ctx.s,v.reviewId);return create(ctx,'recognition',v.title,'Approval',{...v,employeeId:a.employeeId,cycleId:a.cycleId});});
 export const catalogue={
+  cadence:{new:[newCadence],actions:cadenceActions},
   template:{
     new:[action('template.new','Save KPI template',ctx=>isRole(ctx.actor,'pm','hod'),ctx=>[
       field('title','Template name'),pick('review','Source baseline',choices(list(ctx.s,'review').filter(r=>r.baseline&&ctx.scope(r)))),
@@ -38,7 +40,7 @@ export const catalogue={
     action('recognition.authorise','Decide recognition',(ctx,r)=>ctx.actor.role==='executive'&&r.status==='Approval'&&!own(ctx.actor,r),()=>[pick('decision','Decision',['Approve','Decline']),note('reason','Decision and budget authority')],(ctx,r,v)=>Object.assign(r,{decision:v,status:v.decision==='Approve'?'Approved':'Declined'}))
   ]}
 };
-Object.assign(sections,{template:'KPI templates',mapping:'Commercial rating conversions',recognition:'Recognition',track:'Track assignments',migration:'Migration reconciliation',scenario:'Salary scenarios',sourceBatch:'Commercial imports',cutover:'Rollout approval',payBasis:'Payroll snapshots',meritException:'Merit exceptions'});
+Object.assign(sections,{cadence:'Formal review schedules',template:'KPI templates',mapping:'Commercial rating conversions',recognition:'Recognition',track:'Track assignments',migration:'Migration reconciliation',scenario:'Salary scenarios',sourceBatch:'Commercial imports',cutover:'Rollout approval',payBasis:'Payroll snapshots',meritException:'Merit exceptions'});
 export function context(s,actor,at=new Date().toISOString()) {
   requireThat(signed(actor),'Sign in with an active account.',401);
   return {s,actor,at,scope:r=>scope(s,actor,r)};
@@ -77,25 +79,33 @@ function displayRecord(ctx,r){
   if(r.type==='response'){
     const safe={category:r.category,cycleId:r.cycleId};
     if(ctx.actor.id===r.rater){safe.subject=get(ctx.s,r.employeeId).title;safe.submissionStatus=r.status;}
-    if(['Nomination','HR validation'].includes(r.status)&&(isRole(ctx.actor,'pm')||ctx.actor.role==='manager')){safe.nominee=ctx.s.users.find(u=>u.id===r.rater)?.name;safe.exposure=r.exposure;}
-    if(isRole(ctx.actor,'pm')&&['Submitted','Validated'].includes(r.status)){safe.example=r.answers.example;safe.score=r.score;}
+    if(['Nomination','HR validation'].includes(r.status)&&(isRole(ctx.actor,'pm')||ctx.actor.role==='manager')){safe.nominee=ctx.s.users.find(u=>u.id===r.rater)?.name;safe.exposure=r.exposure;
+      const load=list(ctx.s,'response').filter(a=>a.rater===r.rater&&outstanding(a)&&ctx.scope(a)).length;
+      safe.assignmentLoad=load;safe.workloadWarning=load>(r.observerLoad || (r.cycleId && get(ctx.s,r.cycleId).policy.observerLoad)||10)?'Review observer workload before invitation':undefined;}
+    if(isRole(ctx.actor,'pm')&&r.feedbackAdmins?.includes(ctx.actor.id)&&r.inspection?.actor===ctx.actor.id && Date.parse(ctx.at)>=Date.parse(r.inspection.at) && Date.parse(ctx.at)-Date.parse(r.inspection.at)<300000){
+      safe.example=r.answers?.example;safe.score=r.score;
+    }
     return safe;
   }
   if(r.type==='review'&&own(ctx.actor,r)){
     const data={cycleId:r.cycleId,goals:r.goals,checkIns:r.checkIns,selfReview:r.selfReview,goalFeedback:r.goalFeedback};
     if(r.releasedAt)Object.assign(data,{finalScore:r.revisions.at(-1).finalScore,rating:r.revisions.at(-1).finalRating,conversation:r.conversation,development:r.development,receipt:r.ack});
     if(r.releasedAt && r.assessment?.behaviour.source==='360 feedback'){
-      data.feedback = {score:r.assessment.behaviour.score, categories:r.assessment.behaviour.groups.map(g=>({
-        category:g.category, score:g.score, summary:r.feedbackThemes?.[g.category] || undefined
-      }))};
+      data.feedback = {score:Math.round(r.assessment.behaviour.score*100)/100,periodStart:r.campaign?.start,periodEnd:r.campaign?.end,competencies:r.assessment.behaviour.competencies,strengths:r.feedbackThemes?.strengths,development:r.feedbackThemes?.development};
     }
     return data;
+  }
+  if(r.type==='review' && r.assessment?.behaviour?.source==='360 feedback' && !isRole(ctx.actor,'pm')){
+    const visible=Object.fromEntries(Object.entries(r).filter(([key])=>!hidden.has(key)&&!['feedbackReviewed','feedbackThemes','assessment'].includes(key)));
+    visible.assessment={...r.assessment,behaviour:{source:'360 feedback',score:r.assessment.behaviour.score}};
+    if(r.releasedAt)visible.feedback={...r.feedbackThemes,competencies:r.assessment.behaviour.competencies};
+    return visible;
   }
   if(r.type==='employee')return {staffId:r.staffId,name:r.title,company:r.company,department:r.department,jobTitle:r.jobTitle,manager:r.managerId,confirmed:r.confirmed,commercial:r.commercial,joinedAt:r.joinedAt,track:r.track,email:r.email,businessUnit:r.businessUnit,team:r.team,grade:r.grade};
   if(r.type==='cycle')return {...(r.behaviourMode==='Full 360'&&isRole(ctx.actor,'pm') ? {campaignProgress:campaignProgress(ctx,r),feedbackDeadline:dueDate(ctx,{cycleId:r.id})} : {}),start:r.start,end:r.end,behaviourMode:r.behaviourMode,policyId:r.policyId,selfDue:r.selfDue,managerDue:r.managerDue,calibrationDue:r.calibrationDue,closeDue:r.closeDue,eligible:r.membership.length};
   if(r.type==='merit'&&ctx.actor.role==='pm')return {cadence:r.frequency,pool:r.pool,proposedCostNGN:(r.costKobo??0)/100,lines:r.lines.map(l=>({name:l.name,rating:l.rating,nominal:l.nominal,eligibility:l.eligibility})),equity:r.equity};
   if(r.type==='commercial'&&own(ctx.actor,r)&&!['Released','Acknowledged'].includes(r.status))return {month:r.month,target:r.target,unit:r.unit,coaching:r.coaching};
-  if(r.type==='probation'&&own(ctx.actor,r)&&r.status!=='Closed')return {deliverables:r.deliverables,support:r.support,dates:r.dates,finalDue:r.finalDue,checkpoints:r.checkpoints};
+  if(r.type==='probation'&&own(ctx.actor,r))return {...(r.status==='Closed'?{outcome:r.outcome,decision:r.decisions?.at(-1)?.reason}:{}),deliverables:r.deliverables,support:r.support,dates:r.dates,finalDue:r.finalDue,checkpoints:r.checkpoints};
   if(r.type==='capability'&&own(ctx.actor,r))return {kind:r.kind,gap:r.gap,standard:r.standard,coaching:r.coaching,plan:r.plan,checkpoints:r.checkpoints,decision:r.status==='Closed'?r.decision:undefined};
   return Object.fromEntries(Object.entries(r).filter(([k,v])=>!hidden.has(k)&&v!=null&&v!==''));
 }
@@ -144,7 +154,18 @@ export function processDeadlines(s,at=new Date().toISOString()){
     }
   }
   for(const r of list(s,'response')){
-    if(outstanding(r) && today>dueDate(ctx,r)){
+    const due=dueDate(ctx,r);
+    if(['Invited','In progress'].includes(r.status)){
+      const holidays=r.cycleId?get(s,r.cycleId).policy.holidays:[];
+      for(const lead of [7,3,1]){
+        const key='feedback-reminder:'+r.id+':'+lead+':'+due;
+        if(today===addWorkdays(due,-lead,holidays)&&!s.outbox.some(n=>n.key===key)){
+          notify(ctx,r,r.rater,'Confidential questionnaire due '+due,due);
+          s.outbox.at(-1).key=key;count++;
+        }
+      }
+    }
+    if(outstanding(r) && today>due){
       const from=r.status;
       r.status='Expired';
       journal(ctx,r,'response.expire',{from,to:r.status});

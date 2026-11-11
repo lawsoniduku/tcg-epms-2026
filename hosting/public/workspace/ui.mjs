@@ -3,7 +3,7 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 const groups=[
  ['Work',['home','inbox','review','response','commercial','sourceBatch','probation']],
  ['Decisions',['appeal','capability','recognition','merit','payBasis','meritException','scenario','talent','exception']],
- ['Management',['employee','strategy','template','mapping','policy','cycle','track','batch','migration','cutover','reports','audit','accounts']]
+ ['Management',['employee','strategy','template','mapping','policy','cadence','cycle','track','batch','migration','cutover','reports','audit','accounts']]
 ];
 const extra={home:'Overview',inbox:'My work',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
 const friendly={employeeId:'Employee',cycleId:'Cycle',policyId:'Policy version',reviewId:'Appraisal',source:'Source',qa:'Quality review',cpiStart:'Starting CPI index',cpiEnd:'Closing CPI index',poolKobo:'Budget (kobo)',proposedKobo:'Proposed annual increase (kobo)',awardKobo:'Approved annual increase (kobo)',supervisorScore:'Submitted supervisor score',calibratedScore:'Approved calibration score',by:'Recorded by',at:'Recorded at',reference:'Reference',kind:'Type',id:'Reference',status:'Status'};
@@ -129,11 +129,11 @@ function finalPreview(){
  const base=state.detail.data.calibratedScore??state.detail.data.supervisorScore;
  const input=dialog.querySelector('[name="deduction"]');
  const points=Number(input?.value||0);
- const final=(Math.round(base*100)-Math.round(points*100))/100;
+ const final=Math.max(1,(Math.round(base*100)-Math.round(points*100))/100);
  const el=dialog.querySelector('[data-final-preview]');
- if(el)el.textContent=Number.isFinite(final)&&final>=1&&final<=5?final.toFixed(2)+' / 5':'Check deduction';
+ if(el)el.textContent=Number.isFinite(final)&&final>=1&&final<=5?final.toFixed(2)+' / 5 · Rating '+(final>=4.5?5:final>=3.75?4:final>=2.75?3:final>=2?2:1):'Check deduction';
 }
-function openForm(form,kind='workflow'){currentForm={...form,kind,requestId:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};dialog.innerHTML='<h2 id="dialog-title">'+escape(form.label)+'</h2><form id="operation">'+(form.id==='review.lock'?'<div class="notice"><div>Supervisor '+escape(state.detail.data.supervisorScore.toFixed(2))+' · Calibrated '+escape(state.detail.data.calibratedScore.toFixed(2))+'<br>Final score: <strong data-final-preview></strong>'+(form.fields.some(f=>f.key==='deduction')?'':'<br>Deduction 0.00 · Disabled by cycle policy')+'</div></div>':'')+form.fields.map(input).join('')+'<p class="form-error" role="alert"></p><div class="actions">'+button('Cancel','type="button" data-cancel',true)+'<button type="submit" class="button teal">'+escape(form.label)+'</button></div></form>';dialog.showModal();if(form.id==='review.lock')finalPreview();}
+function openForm(form,kind='workflow'){currentForm={...form,kind,requestId:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};dialog.innerHTML='<h2 id="dialog-title">'+escape(form.label)+'</h2><form id="operation">'+(form.id==='review.lock'?'<div class="notice"><div>Supervisor '+escape(state.detail.data.supervisorScore.toFixed(2))+' · Calibrated '+escape((state.detail.data.calibratedScore??state.detail.data.supervisorScore).toFixed(2))+'<br>Final score: <strong data-final-preview></strong>'+(form.fields.some(f=>f.key==='deduction')?'':'<br>Deduction 0.00 · Disabled by cycle policy')+'</div></div>':'')+form.fields.map(input).join('')+'<p class="form-error" role="alert"></p><div class="actions">'+button('Cancel','type="button" data-cancel',true)+'<button type="submit" class="button teal">'+escape(form.label)+'</button></div></form>';dialog.showModal();if(form.id==='review.lock')finalPreview();}
 async function download(report){
  const response=await fetch('/api/platform/export?report='+encodeURIComponent(report)+'&id='+encodeURIComponent(selected));if(!response.ok)throw Error((await response.json()).error);
  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=report+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);

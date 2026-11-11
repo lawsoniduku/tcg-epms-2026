@@ -2,7 +2,7 @@ import {feedbackActions,redactThemes} from './feedback.mjs';
 import {effectiveGoals} from './governance.mjs';
 import {action,addWorkdays,average,choices,create,dateValue,evidenceScore,field,get,heads,isRole,isoDay,journal,list,manages,need,nextStatus,noFields,note,notify,num,option,own,perspectives,pick,ratingFor,round,scoreValue,trackAScore,yes} from './model.mjs';
 import {finalisationPreview} from '../shared/domain.mjs';
-const cycle=(ctx,r)=>get(ctx.s,r.cycleId,'cycle');
+const cycle=(ctx,r)=>r.type==='probation'?r.feedbackConfig:get(ctx.s,r.cycleId,'cycle');
 const policy=(ctx,r)=>cycle(ctx,r).policy;
 const manager=(ctx,r)=>manages(ctx.s,ctx.actor,r);
 const hod=(ctx,r)=>heads(ctx.s,ctx.actor,r);
@@ -21,19 +21,46 @@ const goalFields=ctx=>[
   field('title','KPI name'),pick('objective','Linked individual objective',choices(list(ctx.s,'strategy').filter(o=>o.level==='Individual'&&o.status==='Approved'))),
   pick('perspective','BSC perspective',perspectives),note('outcome','Expected outcome'),num('weight','Weight within BSC (%)',0.01,100),
   num('baseline','Baseline',-1e12,1e12),num('target','Target',-1e12,1e12),field('unit','Unit of measure'),
-  pick('direction','Scoring approach',['Higher is better','Lower is better','Approved milestone scale']),
+  pick('direction','Scoring approach',['Higher is better','Lower is better','Approved milestone scale','Binary outcome']),
   field('thresholds','Anchors for ratings 2, 3, 4 and 5','text',{optional:true,hint:'For lower-is-better or milestones, enter four ordered numeric thresholds, separated by commas.'}),
   field('source','Authoritative data source'),field('evidence','Evidence required'),yes('leadership','People leadership KPI'),
-  num('gateCap','Maximum rating if critical gate fails',1,5,{integer:true,default:5}),field('gate','Critical gate definition','text',{optional:true})
+  num('gateCap','Maximum rating if critical gate fails',1,5,{default:5}),field('gate','Critical gate definition','text',{optional:true})
 ];
 const goalsEditable=(ctx,r)=>r.status==='Goal setting'&&(manager(ctx,r)||employee(ctx,r));
+const canNominate=(ctx,r)=>own(ctx.actor,r) && (r.type==='probation'
+  ? !!r.feedbackConfig && ['Final assessment','Extension review'].includes(r.status)
+  : ['In progress','Self-review','Manager assessment'].includes(r.status)&&cycle(ctx,r).behaviourMode==='Full 360');
+const nomination=action('review.nominate','Nominate 360 observer',canNominate,(ctx,r)=>[
+    pick('rater','Observer',ctx.s.users.filter(u=>u.active!==false&&u.employeeId!==r.employeeId).map(u=>option(u.id,u.name))),
+    pick('category','Relationship',r.snapshot.peopleManager?['Manager','Peer','Direct report','Stakeholder']:['Manager','Peer','Stakeholder']),note('exposure','Relevant working exposure')
+  ],(ctx,r,v)=>{
+    need(!ctx.s.liveCalendar || isoDay(ctx.at)<=(cycle(ctx,r).feedbackDue || cycle(ctx,r).managerDue),'Feedback nomination has closed.');
+    const identity=id=>ctx.s.users.find(u=>u.id===id)?.employeeId || id;
+    need(!list(ctx.s,'response').some(x=>x.reviewId===r.id&&identity(x.rater)===identity(v.rater)),'This observer already has a nomination.');
+    if(v.category==='Manager')need(v.rater===r.snapshot.managerId,'Select the assigned manager for this category.');
+    if(v.rater===r.snapshot.managerId)need(v.category==='Manager','The assigned manager belongs to the Manager category.');
+    const nominee=ctx.s.users.find(u=>u.id===v.rater);
+    if(v.category==='Direct report' && nominee.employeeId){
+      const subjectLogins=ctx.s.users.filter(u=>u.employeeId===r.employeeId).map(u=>u.id);
+      need(subjectLogins.includes(get(ctx.s,nominee.employeeId,'employee').managerId),'The roster does not identify this observer as a direct report.');
+    }
+    const reviewAssignments=list(ctx.s,'response').filter(a=>a.reviewId===r.id&&!['Expired','Excluded','Declined'].includes(a.status));
+    if(cycle(ctx,r).policy.nominationCap)need(reviewAssignments.length<cycle(ctx,r).policy.nominationCap,'Campaign nomination limit reached.');
+    const item=create(ctx,'response',r.title+' · '+v.category,'Nomination',{reviewId:r.id,employeeId:r.employeeId,cycleId:r.cycleId,feedbackAdmins:cycle(ctx,r).policy.feedbackAdmins,feedbackDeadline:cycle(ctx,r).feedbackDue,minimumObserved:cycle(ctx,r).policy.minimumObserved,observerLoad:cycle(ctx,r).policy.observerLoad,rater:v.rater,category:v.category,exposure:v.exposure});
+    journal(ctx,item,'response.nominate');notify(ctx,item,r.actingReviewer || r.snapshot.managerId,'Validate a 360 nomination');return r;
+  });
+export const probationNomination={...nomination,id:'probation.nominate'};
 export const reviewActions=[
   action('review.goal','Add KPI',goalsEditable,goalFields,(ctx,r,v)=>{
     need(Number.isInteger(Number((v.weight*100).toFixed(6))),'Weights support up to two decimal places.');
     need(!r.goals.some(g=>g.title.toLowerCase()===v.title.toLowerCase()),'KPI name already exists on this scorecard.');
     const goal={...v,id:crypto.randomUUID(),anchors:[]};
     if(v.direction==='Higher is better')need(v.target>0,'Higher-is-better target must be positive.');
-    else{
+    else if(v.direction==='Binary outcome'){
+      const anchors=v.thresholds.split(',').map(t=>t.trim());
+      need(anchors.length===2 && anchors.every(t=>/^[1-5]$/.test(t)),'Enter the approved fail and pass ratings separated by a comma.');
+      goal.anchors=anchors.map(Number);
+    }else{
       const raw=v.thresholds.split(',').map(x=>x.trim());const anchors=raw.map(Number);
       need(raw.length===4&&raw.every(Boolean)&&anchors.every(Number.isFinite),'Enter four numeric rating thresholds.');
       need(anchors.every((n,i)=>i===0||(v.direction==='Lower is better'?n<anchors[i-1]:n>anchors[i-1])),'Rating anchors must be strictly ordered.');
@@ -74,22 +101,7 @@ export const reviewActions=[
     r.observation={...v,by:ctx.actor.id};return r;
   }),
   redactThemes,
-  action('review.nominate','Nominate 360 observer',(ctx,r)=>own(ctx.actor,r)&&['In progress','Self-review','Manager assessment'].includes(r.status)&&cycle(ctx,r).behaviourMode==='Full 360',(ctx,r)=>[
-    pick('rater','Observer',ctx.s.users.filter(u=>u.active!==false&&u.employeeId!==r.employeeId).map(u=>option(u.id,u.name))),
-    pick('category','Relationship',r.snapshot.peopleManager?['Manager','Peer','Direct report','Stakeholder']:['Manager','Peer','Stakeholder']),note('exposure','Relevant working exposure')
-  ],(ctx,r,v)=>{
-    need(!ctx.s.liveCalendar || isoDay(ctx.at)<=(cycle(ctx,r).feedbackDue || cycle(ctx,r).managerDue),'Feedback nomination has closed.');
-    need(!list(ctx.s,'response').some(x=>x.reviewId===r.id&&x.rater===v.rater),'This observer already has a nomination.');
-    if(v.category==='Manager')need(v.rater===r.snapshot.managerId,'Select the assigned manager for this category.');
-    if(v.rater===r.snapshot.managerId)need(v.category==='Manager','The assigned manager belongs to the Manager category.');
-    const nominee=ctx.s.users.find(u=>u.id===v.rater);
-    if(v.category==='Direct report' && nominee.employeeId){
-      const subjectLogins=ctx.s.users.filter(u=>u.employeeId===r.employeeId).map(u=>u.id);
-      need(subjectLogins.includes(get(ctx.s,nominee.employeeId,'employee').managerId),'The roster does not identify this observer as a direct report.');
-    }
-    const item=create(ctx,'response',r.title+' · '+v.category,'Nomination',{reviewId:r.id,employeeId:r.employeeId,cycleId:r.cycleId,rater:v.rater,category:v.category,exposure:v.exposure});
-    journal(ctx,item,'response.nominate');notify(ctx,item,r.actingReviewer || r.snapshot.managerId,'Validate a 360 nomination');return r;
-  }),
+  nomination,
   action('review.assess','Submit supervisor assessment',atStage('Manager assessment',manager),(ctx,r)=>[
     ...r.goals.flatMap(g=>[num('actual_'+g.id,g.title+' · actual result',-1e12,1e12),field('evidence_'+g.id,g.title+' · verified evidence'),note('rationale_'+g.id,g.title+' · rating rationale (required for a rating other than 3 or a failed gate)',{optional:true}),yes('stretch_'+g.id,g.title+' · stretch and quality confirmed'),...(g.gate?[yes('pass_'+g.id,g.title+' · critical gate passed')]:[])]),
     note('summary','Supervisor evidence and summary')
@@ -107,7 +119,7 @@ export const reviewActions=[
     const bsc=round(items.reduce((sum,g)=>sum+g.rating*g.weight,0)/100);
     const behaviour=behaviourResult(ctx,r);
     r.assessment={items,bsc,behaviour,summary:v.summary,by:ctx.actor.id,at:ctx.at};
-    r.supervisorScore=trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
+    r.supervisorScore=cycle(ctx,r).scoringVersion==='4.2'?compositeScore(items,behaviour):trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
   }),
   action('review.calibrate','Record calibration decision',atStage('Calibration',(ctx,r)=>r.panel?.chair===ctx.actor.id&&!own(ctx.actor,r)),()=>[
     num('score','Calibrated score',1,5),note('reason','Panel rationale'),field('evidence','Evidence reference'),field('members','Panel participants'),yes('consequential','Recognition, promotion, dispute or other consequential decision')
@@ -118,7 +130,7 @@ export const reviewActions=[
   }),
   action('review.moderate','Approve enterprise moderation',atStage('Enterprise moderation',(ctx,r)=>isRole(ctx.actor,'executive')&&!own(ctx.actor,r)),reason,(ctx,r,v)=>{r.moderation={...v,by:ctx.actor.id,at:ctx.at};r.status='Finalisation';return r;}),
   action('review.lock','Lock final score',atStage('Finalisation',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)),(ctx,r)=>[
-    ...(policy(ctx,r).allowDeduction==='Yes'?[num('deduction','Deduction points',0,policy(ctx,r).deductionCap,{default:0})]:[]),
+    ...(policy(ctx,r).allowDeduction==='Yes'?[num('deduction','Deduction points',0,cycle(ctx,r).scoringVersion==='4.2'?999:policy(ctx,r).deductionCap,{default:0})]:[]),
     note('reason','Adjustment comment',{optional:true}),field('evidence','Evidence reference','text',{optional:true})
   ],(ctx,r,v)=>lockReview(ctx,r,v)),
   action('review.reopen','Reopen final score',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status),()=>[note('reason','Reason for correction'),field('approval','Authorisation reference')],(ctx,r,v)=>{
@@ -137,11 +149,18 @@ export const reviewActions=[
 ];
 export function lockReview(ctx,r,v){
   need(r.status==='Finalisation','Only records ready for finalisation may be locked.');need(pm(ctx)&&!own(ctx.actor,r),'PM finalisation authority is required.');
-  const p=policy(ctx,r), adjustment={mode:p.allowDeduction==='Yes'?'controlled':'disabled',approvalReference:p.approval?.reference,approvedBy:p.approval?.by,tracks:['A'],maxPoints:p.deductionCap,floor:p.deductionFloor,evidenceRequired:true};
+  const p=policy(ctx,r),modern=cycle(ctx,r).scoringVersion==='4.2', adjustment={mode:p.allowDeduction==='Yes'?'controlled':'disabled',approvalReference:p.approval?.reference,approvedBy:p.approval?.by,tracks:['A'],maxPoints:p.deductionCap,floor:p.deductionFloor,manualPoints:modern,evidenceRequired:!modern};
   const result=finalisationPreview({track:'A',status:'ready',supervisorScore:r.supervisorScore,calibratedScore:r.calibratedScore,calibrationComplete:true,version:r.version},{expectedVersion:r.version,deductionPoints:v.deduction||0,reason:v.reason,evidence:v.evidence,basis:p.deductionBasis},adjustment);
   r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
 }
 export const responseActions=feedbackActions;
+// Express questionnaire means in sixtieths (1–6 observed questions) and KPI weights in hundredths of a percent.
+function compositeScore(items,behaviour){
+  const bscUnits=items.reduce((sum,item)=>sum+Math.round(item.rating*100)*Math.round(item.weight*100),0);
+  const denominator=1000000n*BigInt(behaviour.divisor);
+  const numerator=BigInt(bscUnits)*70n*BigInt(behaviour.divisor)+BigInt(behaviour.units)*30n*1000000n;
+  return Number((2n*numerator+denominator)/(2n*denominator))/100;
+}
 export function behaviourResult(ctx,r) {
   const c=cycle(ctx,r),p=c.policy;
   if(c.behaviourMode==='Documented observations'){
@@ -151,6 +170,28 @@ export function behaviourResult(ctx,r) {
     return {source:'Documented observation',score:r.observation.score};
   }
   const responses=list(ctx.s,'response').filter(x=>x.reviewId===r.id&&x.status==='Validated');
+  if(c.scoringVersion==='4.2'){
+    const byIdentity=new Map();
+    for(const response of responses){
+      const user=ctx.s.users.find(u=>u.id===response.rater);
+      if(!user || user.employeeId===r.employeeId)continue;
+      const identity=user.employeeId||user.id;
+      need(!byIdentity.has(identity),'Duplicate observer identity requires moderation.');
+      byIdentity.set(identity,response);
+    }
+    const valid=[...byIdentity.values()];
+    need(valid.filter(a=>a.category!=='Manager').length >= (p.minimumAnonymous||3),'360_DATA_PENDING: more distinct anonymous observers are required.');
+    const units=valid.reduce((sum,a)=>sum+Math.round(a.score*60),0),divisor=60*valid.length;
+    const score=units/divisor;
+    const competencies=[];
+    for(const [key,label] of r.campaign.questions || []){
+      const observed=valid.filter(response=>response.answers?.[key] && response.answers[key]!=='NOT_OBSERVED');
+      if(observed.filter(response=>response.category!=='Manager').length >= (p.minimumAnonymous||3)){
+        competencies.push({competency:label,score:round(observed.reduce((sum,a)=>sum+Number(a.answers[key]),0)/observed.length)});
+      }
+    }
+    return {source:'360 feedback',score,units,divisor,competencies,method:'Equal individual raters',campaign:r.campaign.id,periodStart:c.start,periodEnd:c.end};
+  }
   const weights=r.snapshot.peopleManager?{'Manager':40,'Peer':20,'Direct report':30,'Stakeholder':10}:{Manager:50,Peer:30,Stakeholder:20};
   const groups=[];let total=0,weighted=0;
   for(const [category,weight] of Object.entries(weights)){

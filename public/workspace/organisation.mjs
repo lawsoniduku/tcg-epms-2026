@@ -1,6 +1,7 @@
+import {competencyBank} from './feedback.mjs';
 import {rosterAt,rosterSnapshot,recordAssignment} from './roster.mjs';
 import {trackAt} from './governance.mjs';
-import {action,activePolicy,addMonths,addWorkdays,anyRole,choices,create,csv,dateValue,field,get,heads,isRole,isoDay,journal,list,need,noFields,note,notify,num,option,perspectives,pick,readFields,route,yes} from './model.mjs';
+import {action,activePolicy,addMonths,addWorkdays,anyRole,choices,create,csv,dateValue,field,get,heads,isRole,isoDay,journal,list,need,noFields,note,notify,num,option,perspectives,pick,readFields,route,ratingFor,yes} from './model.mjs';
 
 const allStaff = s => list(s,'employee').filter(e=>e.active);
 const managers = ctx => ctx.s.users.filter(u=>u.active!==false&&u.role==='manager').map(u=>option(u.id,u.name));
@@ -60,19 +61,36 @@ export const employeeActions=[
 const scheduleFields=()=>[
   field('title','Policy version name'),field('effective','Effective from','date'),field('authority','Signed policy or approval reference'),
   ...perspectives.map((p,i)=>num('weight'+i,p+' weight (%)',0,100,{integer:true})),
-  pick('fallback','Insufficient 360 response treatment',['Require additional raters','Redistribute across valid observer categories']),
-  pick('quarterlyEvidence','Quarters without a full 360',['Approved documented manager observations','Require full 360']),
+  num('minimumAnonymous','Minimum distinct anonymous observers approved for release',3,50,{integer:true,default:3}),
+  note('templateLabels','Localised competency labels (optional, one key and label per line)',{optional:true,hint:'Example: teamwork=Evidence-based problem solving and collaboration. Keys: improvement, execution, customerFocus, integrity, teamwork, leadership.'}),
+  field('feedbackAdmins','Additional authorised confidential-feedback administrator account IDs','text',{optional:true,hint:'Separate approved PM account IDs with commas. The drafting PM is included.'}),
+  field('privacyApproval','Privacy approval reference','text',{optional:true}),
+  pick('probationFeedback','Formal confirmation review feedback',['Contract and policy do not require 360','Require linked full 360'],{default:'Contract and policy do not require 360'}),
+  num('nominationCap','Maximum active nominations per employee',4,200,{integer:true,default:20}),
+  num('observerLoad','Concurrent assignments before workload warning',1,200,{integer:true,default:10}),
+  num('minimumObserved','Minimum scored competencies per observer',1,5,{integer:true,default:1}),
   num('freshness','Maximum behavioural evidence age (days)',1,366,{integer:true}),
   field('holidays','Public holidays','text',{optional:true,hint:'Comma-separated ISO dates, for example 2027-01-01.'}),
-  yes('allowDeduction','Authorise manual score deductions'),num('deductionCap','Maximum deduction (points)',0,4,{default:0}),
-  num('deductionFloor','Minimum final score',1,5,{default:1}),field('deductionBasis','Deduction authority and eligible events','text',{optional:true}),
+  yes('allowDeduction','Authorise manual score deductions'),
   num('appealDays','Appeal window (working days)',1,90,{integer:true,default:5})
 ];
 export const createPolicy=action('policy.new','Draft policy version',anyRole('pm'),scheduleFields,(ctx,r,v)=>{
   need(perspectives.reduce((sum,p,i)=>sum+v['weight'+i],0)===100,'Perspective weights must total 100%.');
+  const labels={};
+  const known=new Set(competencyBank(true).map(([key])=>key));
+  for(const line of (v.templateLabels||'').split('\n').filter(Boolean)){
+    const [key,...words]=line.split('='),label=words.join('=').trim();
+    need(known.has(key.trim()) && label && !Object.hasOwn(labels,key.trim()),'Invalid or repeated competency key.');
+    labels[key.trim()]=label;
+  }
+  v.labels=labels;
+  v.feedbackAdmins=[...new Set([ctx.actor.id,...(v.feedbackAdmins||'').split(',').map(s=>s.trim()).filter(Boolean)])];
+  need(v.feedbackAdmins.every(id=>ctx.s.users.some(u=>u.id===id && u.active!==false && (!ctx.actor.company || !u.company || u.company===ctx.actor.company) && (u.role==='pm'||u.additionalRoles?.includes('pm')))),'Use active PM accounts within your scope.');
+
+  if(ctx.s.liveCalendar)need(v.privacyApproval,'Supply the approval for privacy and respondent coverage.');
   const holidays=v.holidays.split(',').map(h=>h.trim()).filter(Boolean);holidays.forEach(dateValue);
-  if(v.allowDeduction==='Yes')need(v.deductionCap>0&&v.deductionBasis,'Enter an approved cap and event basis.');
-  return create(ctx,'policy',v.title,'Awaiting executive approval',{...v,holidays,weights:perspectives.map((p,i)=>v['weight'+i]),author:ctx.actor.id});
+
+  return create(ctx,'policy',v.title,'Awaiting executive approval',{...v,scoringVersion:'4.2',holidays,weights:perspectives.map((p,i)=>v['weight'+i]),author:ctx.actor.id});
 });
 export const policyActions=[action('policy.publish','Publish approved policy',(ctx,r)=>isRole(ctx.actor,'executive')&&r.status==='Awaiting executive approval'&&r.author!==ctx.actor.id,()=>[field('reference','Executive approval reference')],(ctx,r,v)=>{r.status='Published';r.approval={by:ctx.actor.id,at:ctx.at,reference:v.reference};return r;})];
 const levels=['Group','Business unit','Department','Team','Individual'];
@@ -88,21 +106,25 @@ export const strategyActions=[action('strategy.approve','Approve objective',(ctx
 export const createCycle=action('cycle.new','Create review cycle',anyRole('pm'),ctx=>[
   field('title','Cycle name'),field('start','Period start','date'),field('end','Period end','date'),
   pick('policyId','Approved policy',choices(list(ctx.s,'policy').filter(r=>r.status==='Published'))),
-  pick('behaviourMode','Behaviour evidence for this cycle',['Policy calendar','Full 360','Documented observations'],{default:'Policy calendar'}),
+  pick('behaviourMode','Behaviour evidence for this cycle',['Full 360'],{default:'Full 360'}),
   field('feedbackDue','360 response deadline','date',{optional:true,hint:'Defaults to the supervisor deadline.'}),
   field('selfDue','Self-review deadline','date',{optional:true,hint:'Defaults to period end.'}),field('managerDue','Manager deadline','date',{optional:true,hint:'Defaults to five working days after period end.'}),field('calibrationDue','Calibration deadline','date',{optional:true,hint:'Defaults to ten working days after period end.'}),field('closeDue','Closure deadline','date',{optional:true,hint:'Defaults to fifteen working days after period end.'})
 ],(ctx,r,v)=>{
   const p=get(ctx.s,v.policyId,'policy');need(p.status==='Published'&&p.effective<=v.start,'Select a policy effective by cycle start.');
-  if(v.behaviourMode==='Policy calendar'){
-    const quarter=Math.ceil(Number(v.end.slice(5,7))/3);
-    v.behaviourMode=(quarter%2===0 || p.quarterlyEvidence!=='Approved documented manager observations')?'Full 360':'Documented observations';
-  }
+  v.behaviourMode='Full 360';
+  v.scoringVersion='4.2';
+  if(ctx.s.liveCalendar)need(p.scoringVersion==='4.2'&&p.approval?.reference,'Publish an approved v4.2 policy before opening new formal periods.');
+  v.frequency ||= 'Quarterly';
+  const month=Number(v.start.slice(5,7)),months=v.frequency==='Biannual'?6:3;
+  const periodEnd=new Date(Date.UTC(Number(v.start.slice(0,4)),month-1+months,0,12)).toISOString().slice(0,10);
+  need(v.start.endsWith('-01')&&(month-1)%months===0&&v.end===periodEnd,'Use a full calendar quarter or an approved half-year schedule.');
+
   v.selfDue ||= v.end;v.managerDue ||= addWorkdays(v.end,5,p.holidays);v.calibrationDue ||= addWorkdays(v.end,10,p.holidays);v.closeDue ||= addWorkdays(v.end,15,p.holidays);
   v.feedbackDue ||= v.managerDue;
   need(v.feedbackDue>=v.start && v.feedbackDue<=v.managerDue,'Feedback must close between cycle start and supervisor deadline.');
   need(v.start<v.end&&v.selfDue>=v.start&&v.selfDue<=v.managerDue&&v.end<=v.managerDue&&v.managerDue<=v.calibrationDue&&v.calibrationDue<=v.closeDue,'Cycle deadlines must follow the review sequence.');
   need(v.behaviourMode==='Full 360'||p.quarterlyEvidence==='Approved documented manager observations','This policy requires a full 360.');
-  need(!list(ctx.s,'cycle').some(c=>c.start<=v.end&&v.start<=c.end),'A quarterly cycle already covers part of this period.');
+  need(!list(ctx.s,'cycle').some(c=>c.status!=='Cancelled'&&(!ctx.actor.company||!c.company||ctx.actor.company===c.company)&&c.start<=v.end&&v.start<=c.end),'A quarterly cycle already covers part of this period.');
   return create(ctx,'cycle',v.title,'Draft',{...v,policy:structuredClone(p),membership:[],goalDue:addWorkdays(v.start,5,p.holidays),qaDue:addWorkdays(v.start,7,p.holidays),baselineDue:addWorkdays(v.start,10,p.holidays)});
 });
 export const cycleActions=[
@@ -112,11 +134,21 @@ export const cycleActions=[
       const snapshot={id:e.id,staffId:e.staffId,name:e.title,managerId:e.managerId,department:e.department,company:e.company,businessUnit:e.businessUnit,team:e.team,grade:e.grade,jobTitle:e.jobTitle,peopleManager:e.peopleManager,track:trackAt(ctx.s,e,r.start)};
       r.membership.push(snapshot);
       if(snapshot.track==='A'){
-        const review=create(ctx,'review',e.title+' · '+r.title,'Goal setting',{employeeId:e.id,cycleId:r.id,policyId:r.policyId,snapshot,goals:[],checkIns:[],responses:[],calibrations:[],revisions:[],tasks:[],selfReview:null});
+        const review=create(ctx,'review',e.title+' · '+r.title,'Goal setting',{employeeId:e.id,cycleId:r.id,policyId:r.policyId,snapshot,campaign:{id:crypto.randomUUID(),start:r.start,end:r.end,deadline:r.feedbackDue||r.managerDue,version:r.scoringVersion||'legacy',questions:competencyBank(snapshot.peopleManager).map(([id,label])=>[id,r.policy.labels?.[id]||label]),cadence:r.frequency||'Quarterly'},goals:[],checkIns:[],responses:[],calibrations:[],revisions:[],tasks:[],selfReview:null});
         notify(ctx,review,e.managerId,'Agree objectives and scorecard',addWorkdays(r.start,5,r.policy.holidays));
       }
     }
     r.status='Open';return r;
+  }),
+  action('cycle.completeCalibration','Mark cohort calibration complete',(ctx,r)=>isRole(ctx.actor,'pm')&&r.status==='Open',()=>[field('reference','Calibration panel sign-off reference')],(ctx,r,v)=>{
+    const reviews=list(ctx.s,'review').filter(a=>a.cycleId===r.id&&ctx.scope(a)&&a.status==='Calibration');
+    need(reviews.length,'There are no submitted appraisals awaiting calibration.');
+    for(const review of reviews){
+      if(review.panel || [1,2,5].includes(ratingFor(review.supervisorScore)))continue;
+      review.cohortCalibration={reference:v.reference,by:ctx.actor.id,at:ctx.at};
+      review.status='Finalisation';journal(ctx,review,'review.cohortCalibration');
+    }
+    r.calibrationReference=v.reference;return r;
   }),
   action('cycle.close','Close cycle',(ctx,r)=>r.status==='Open'&&isRole(ctx.actor,'pm'),()=>[field('reference','Closure reconciliation reference')],(ctx,r,v)=>{
     const reviews=list(ctx.s,'review').filter(a=>a.cycleId===r.id);

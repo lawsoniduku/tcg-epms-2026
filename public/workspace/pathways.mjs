@@ -1,3 +1,5 @@
+import {probationNomination,behaviourResult} from './quarterly.mjs';
+import {competencyBank} from './feedback.mjs';
 import {trackAt} from './governance.mjs';
 import {action,addMonths,anyRole,choices,create,field,get,heads,isRole,isoDay,journal,list,manages,need,noFields,note,num,own,pick,ratingFor,round,route,yes} from './model.mjs';
 const eligible=(ctx,track)=>list(ctx.s,'employee').filter(e=>e.active&&ctx.scope(e)&&trackAt(ctx.s,e,isoDay(ctx.at))===track);
@@ -51,9 +53,12 @@ export const createProbation=action('probation.new','Create confirmation plan',a
   field('evidence','Evidence sources'),field('contract','Contract and probation schedule reference')
 ],(ctx,r,v)=>{
   const e=get(ctx.s,v.employeeId,'employee');need(!list(ctx.s,'probation').some(x=>x.employeeId===e.id&&x.status!=='Closed'),'This employee has an open confirmation plan.');
-  return create(ctx,'probation',e.title+' · confirmation','Plan approval',{...v,snapshot:structuredClone(e),checkpoints:[],extensions:0,finalDue:addMonths(e.joinedAt,6),dates:[1,3,5].map(m=>addMonths(e.joinedAt,m))});
+  const policy=list(ctx.s,'policy').filter(p=>ctx.scope(p)&&p.status==='Published'&&p.effective<=isoDay(ctx.at)).sort((a,b)=>b.effective.localeCompare(a.effective))[0];
+  const feedbackConfig=policy?.probationFeedback==='Require linked full 360'?{start:e.joinedAt,end:addMonths(e.joinedAt,6),feedbackDue:addMonths(e.joinedAt,6),policy:structuredClone(policy),scoringVersion:'4.2',behaviourMode:'Full 360'}:null;
+  const campaign=feedbackConfig?{id:crypto.randomUUID(),start:e.joinedAt,end:feedbackConfig.end,version:'4.2',questions:competencyBank(e.peopleManager).map(([key,label])=>[key,policy.labels?.[key]||label])}:null;
+  return create(ctx,'probation',e.title+' · confirmation','Plan approval',{...v,campaign,feedbackConfig,snapshot:structuredClone(e),checkpoints:[],extensions:0,finalDue:addMonths(e.joinedAt,6),dates:[1,3,5].map(m=>addMonths(e.joinedAt,m))});
 });
-export const probationActions=[
+export const probationActions=[probationNomination,
   action('probation.approve','Approve confirmation plan',stage('Plan approval',(ctx,r)=>heads(ctx.s,ctx.actor,r)),()=>[field('reference','Plan approval reference')],(ctx,r,v)=>{r.approval=v.reference;r.status='Month 1 checkpoint';return r;}),
   ...[1,3,5].map((month,index)=>action('probation.m'+month,'Record month '+month+' checkpoint',stage('Month '+month+' checkpoint',manager),()=>[
     pick('progress','Performance',['On track','At risk']),note('evidence','Progress and evidence'),note('support','Support delivered and next actions'),
@@ -64,6 +69,7 @@ export const probationActions=[
     yes('critical','Critical breach or insufficient evidence'),pick('recommendation','Recommended outcome',['Confirm','Confirm with development','Extend','Non-confirmation']),
     note('grounds','Evidence and support history'),note('employeeResponse','Employee representation'),field('evidence','Evidence reference')
   ],(ctx,r,v)=>{
+    if(r.feedbackConfig)r.feedbackReport=behaviourResult(ctx,r);
     const w=r.snapshot.commercial?[70,15,15]:[60,20,20];const score=round((v.delivery*w[0]+v.capability*w[1]+v.behaviour*w[2])/100);
     if(v.recommendation==='Extend')need(r.extensions===0,'Only one ordinary extension is permitted.');
     r.assessment={...v,score,weights:w,guide:v.critical==='Yes'?'HR/ER review':score>=3?'Consider confirmation':score>=2.5?'Consider justified extension':'HR/ER review',by:ctx.actor.id};r.status='HR and ER review';return r;

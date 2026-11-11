@@ -8,17 +8,21 @@ const clusters = [
   ['teamwork', 'Problem solving and teamwork']
 ];
 
-export function questionnaire(ctx, response) {
-  const review = get(ctx.s, response.reviewId, 'review');
-  const questions = review.snapshot.peopleManager
+export function competencyBank(peopleManager){
+  return peopleManager
     ? [...clusters, ['leadership', 'People leadership — direction, development, delegation and fair decisions']]
-    : clusters;
-  return [...questions.map(([key, label]) => num(key, label, 1, 5, {integer:true})),
-    note('example', 'Describe an observed behaviour. Only the moderation team can read your comment.')];
+    : clusters.map(item=>[...item]);
+}
+
+export function questionnaire(ctx, response) {
+  const review = get(ctx.s, response.reviewId);
+  const questions=review.campaign?.questions || competencyBank(review.snapshot.peopleManager);
+  return [...questions.map(([key, label]) => pick(key, label, ['1','2','3','4','5','NOT_OBSERVED'],{hint:'1 Not demonstrated · 2 Inconsistent · 3 Meets · 4 Often exceeds · 5 Role model'})),
+    note('example', 'Describe an observed behaviour. Only the moderation team can read your comment.',{optional:true})];
 }
 
 export function dueDate(ctx, response) {
-  const cycle = get(ctx.s, response.cycleId, 'cycle');
+  const cycle = response.feedbackDeadline ? {feedbackDue:response.feedbackDeadline} : get(ctx.s, response.cycleId, 'cycle');
   return cycle.feedbackDue || cycle.managerDue;
 }
 
@@ -27,7 +31,7 @@ export function outstanding(response) {
 }
 
 function open(ctx, response) {
-  const review = get(ctx.s, response.reviewId, 'review');
+  const review = get(ctx.s, response.reviewId);
   return !review.assessment && (!ctx.s.liveCalendar || isoDay(ctx.at) <= dueDate(ctx, response));
 }
 
@@ -35,6 +39,14 @@ const assigned = (ctx, r) => r.rater === ctx.actor.id && !own(ctx.actor,r) &&
   ['Invited','In progress'].includes(r.status) && open(ctx,r);
 
 export const feedbackActions = [
+  action('response.inspect','Inspect restricted response',(ctx,r)=>isRole(ctx.actor,'pm') && (r.feedbackAdmins || []).includes(ctx.actor.id)&&['Submitted','Validated'].includes(r.status)&&!own(ctx.actor,r),
+    ()=>[note('reason','Reason for accessing restricted feedback')],(ctx,r,v)=>{
+      r.inspection={actor:ctx.actor.id,at:ctx.at,reason:v.reason};return r;
+    }),
+  action('response.decline','Decline or declare conflict',assigned,()=>[note('reason','Reason for declining')],(ctx,r,v)=>{
+    r.declineReason=v.reason;r.status='Declined';
+    notify(ctx,get(ctx.s,r.reviewId),get(ctx.s,r.reviewId).snapshot.managerId,'A replacement nomination is needed');return r;
+  }),
   action('response.endorse','Review employee nomination',
     (ctx,r) => r.status === 'Nomination' && manages(ctx.s,ctx.actor,get(ctx.s,r.reviewId)) && open(ctx,r),
     () => [pick('decision','Manager decision',['Endorse','Decline']),note('reason','Working exposure, relationship and conflict check')],
@@ -57,7 +69,10 @@ export const feedbackActions = [
     noFields,(ctx,r) => {r.status='In progress';return r;}),
   action('response.submit','Submit confidential feedback',assigned,questionnaire,
     (ctx,r,v) => {
-      r.score = average(Object.values(v).filter(value => typeof value === 'number'));
+      const observed=Object.entries(v).filter(([key,value])=>key!=='example'&&value!=='NOT_OBSERVED').map(([,value])=>Number(value));
+      need(observed.length >= (r.minimumObserved || (r.cycleId && get(ctx.s,r.cycleId).policy.minimumObserved) || 1),'Insufficient observed competencies.');
+      r.score=observed.reduce((sum,value)=>sum+value,0)/observed.length;
+      r.submittedAt=ctx.at;
       r.answers = v;
       r.status = 'Submitted';
       return r;
@@ -77,13 +92,12 @@ export const redactThemes = action('review.feedbackThemes','Review feedback for 
   (ctx,r) => isRole(ctx.actor,'pm') && !own(ctx.actor,r) &&
     r.assessment?.behaviour.source === '360 feedback' && ['Calibration','Enterprise moderation','Finalisation','Locked'].includes(r.status),
   (ctx,r) => [
-    ...r.assessment.behaviour.groups.map(({category}) => note(category,'Anonymous summary for '+category,{optional:true})),
+    note('strengths','Reviewed strengths',{optional:true}),note('development','Reviewed development themes',{optional:true}),
     field('check','Confirm that names, identifiers and distinctive incidents have been removed', 'select',
       {choices:['Reviewed and safe to release']})
   ],
   (ctx,r,v) => {
-    r.feedbackThemes = Object.fromEntries(r.assessment.behaviour.groups
-      .map(({category}) => [category,v[category]]).filter(([,theme]) => theme));
+    r.feedbackThemes={strengths:v.strengths,development:v.development};
     r.feedbackReviewed = {by:ctx.actor.id,at:ctx.at};
     return r;
   });

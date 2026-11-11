@@ -62,7 +62,7 @@ try:
             act('manager','review',rid,'assess',assessment)
             act('pm','review',rid,'panel',dict(chair='hod',members='Function head',mandate='Synthetic mandate',conflicts='Checked'))
             act('hod','review',rid,'calibrate',dict(score=4,reason='Evidence supports the score',evidence='Register',members='Function head',consequential='No'))
-            act('pm','review',rid,'feedbackThemes',{'Peer':'Colleagues observed effective collaboration','check':'Reviewed and safe to release'})
+            act('pm','review',rid,'feedbackThemes',{'strengths':'Colleagues observed effective collaboration','check':'Reviewed and safe to release'})
             act('pm','review',rid,'lock')
             act('pm','review',rid,'release')
             employee = page_for('employee')

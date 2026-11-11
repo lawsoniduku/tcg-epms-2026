@@ -1,5 +1,7 @@
 # Engineering handover
 
+Current engineering baseline: PRD v4.2 (11 November 2026). See [formal review acceptance](pms/release-4.2.md).
+
 **Deliverable:** TCG PMS 1.0 release candidate. Run the application against a persistent local volume with Node 24. The standalone application can start from an empty database with independently authenticated users. The private acceptance site uses fictional records and supports switching workflow roles.
 
 ## Handover sequence

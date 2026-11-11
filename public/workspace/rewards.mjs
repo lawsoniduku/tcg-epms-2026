@@ -27,7 +27,8 @@ function eligibleHistory(s,employee,r){
   }
   need(track==='A','Only confirmed eligible employees may enter merit review.');
   const reviews=list(s,'review').filter(a=>a.employeeId===employee.id&&a.status==='Closed'&&get(s,a.cycleId).start>=r.start&&get(s,a.cycleId).end<cEnd).sort((a,b)=>get(s,a.cycleId).end.localeCompare(get(s,b.cycleId).end));
-  need(reviews.length===months/3||reviews.length>0&&exception,'A full window of closed quarterly appraisals is required.');
+  const coveredMonths=reviews.reduce((n,a)=>n+(get(s,a.cycleId).frequency==='Biannual'?6:3),0);
+  need(coveredMonths===months||reviews.length>0&&exception,'A full window of closed quarterly appraisals is required.');
   return reviews.map(a=>({id:a.id,version:a.version,score:a.revisions.at(-1).finalScore}));
 }
 function fresh(s,r){
@@ -88,11 +89,11 @@ export const previewDeductions=action('batch.preview','Preview deduction CSV',an
   for(const entry of entries){
     try{const employees=list(ctx.s,'employee').filter(e=>e.staffId===entry.employee_id);
       const cycles=list(ctx.s,'cycle').filter(c=>[c.id,c.title].includes(entry.appraisal_cycle_id));need(employees.length===1&&cycles.length===1,'Unknown or ambiguous employee/cycle.');
-      const review=list(ctx.s,'review').find(a=>a.employeeId===employees[0].id&&a.cycleId===cycles[0].id);need(review,'Missing appraisal.');
+      const review=list(ctx.s,'review').find(a=>a.employeeId===employees[0].id&&a.cycleId===cycles[0].id);need(review&&ctx.scope(review),'Missing appraisal in authorised scope.');
       need(!seen.has(review.id),'Duplicate employee/cycle row.');seen.add(review.id);
       const input={deduction:entry.deduction_points,reason:entry.reason_comment,evidence:entry.evidence_reference??''};
       const clone=structuredClone(review);lockReview(ctx,clone,input);
-      results.push({employee:employees[0].title,id:review.id,version:review.version,before:review.calibratedScore,after:clone.revisions.at(-1).finalScore,input,valid:true});
+      results.push({employee:employees[0].title,id:review.id,version:review.version,before:review.calibratedScore??review.supervisorScore,after:clone.revisions.at(-1).finalScore,input,valid:true});
     }catch(e){results.push({employee:entry.employee_id,valid:false,error:e.message});}
   }
   return create(ctx,'batch',v.filename,'Preview',{rows:results,accepted:results.filter(x=>x.valid).length,rejected:results.filter(x=>!x.valid).length});
