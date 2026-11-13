@@ -1,0 +1,44 @@
+name: Reference build checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install playwright==1.56.0
+      - name: Verify quarterly and half-year feedback in Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then
+            export CHROMIUM="$(command -v google-chrome)"
+          else
+            python -m playwright install --with-deps chromium
+          fi
+          python test/browser/feedback.py
+      - name: Screenshot and responsive acceptance
+        run: |
+          export CHROMIUM="$(command -v google-chrome)"
+          python test/browser/visual.py
+      - name: Check out the previous release for before screenshots
+        uses: actions/checkout@v4
+        with:
+          ref: e022fdfbef22996315b7d85ef8cd8fb9a57f8839
+          path: previous-release
+      - name: Capture previous-release screens
+        working-directory: previous-release
+        run: |
+          export CHROMIUM="$(command -v google-chrome)"
+          export SCREENSHOTS="$GITHUB_WORKSPACE/artifacts/screenshots"
+          python ../test/browser/before.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pms-visual-evidence
+          path: artifacts/screenshots/
