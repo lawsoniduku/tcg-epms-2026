@@ -16,7 +16,7 @@ Current engineering baseline: PRD v4.2 (11 November 2026). See [formal review ac
 
 The quarterly journey, including score entry, calibration and finalisation, has both automated coverage and a multi-role desktop browser walkthrough. The other paths have differing levels of automated and manual verification. See the evidence table before scheduling a cutover.
 
-SQLite is the supplied single-instance database. Keep it on a durable local filesystem. A clustered installation or a mandatory corporate database requires a replacement repository adapter and concurrency testing. Review retention, access scopes, privileged MFA, independent penetration testing, capacity and recovery objectives in TCG's environment. The optional hosted acceptance workspace has separate per-viewer storage and a smaller deployment envelope.
+SQLite is the supplied single-instance database. Keep it on a durable local filesystem. A clustered installation or a mandatory corporate database requires a replacement repository adapter and concurrency testing. Review retention, access scopes, privileged MFA, independent penetration testing, capacity and recovery objectives in TCG's environment. The previous private preview runs the earlier build. Use the standalone staging release for acceptance of this upgrade.
 
 The standalone service accepts evidence references and encrypted PDF, image or text attachments. Attachments stay quarantined until the corporate malware scanner attests to the file digest. The hosted acceptance site uses evidence references. Approval references record a human's authorisation in the audit trail. TCG must verify its own signed source documents and delegated powers.
 
