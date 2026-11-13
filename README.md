@@ -4,7 +4,7 @@ This release candidate runs quarterly scorecards, commercial monthly reviews, pr
 
 ## Run the acceptance application
 
-Install Node.js 24 and run the following from the project root.
+Install Python 3 for Excel workbook import/export and Node.js 24 and run the following from the project root.
 
 ```sh
 npm run demo
@@ -33,4 +33,4 @@ npm test
 npm run build
 ```
 
-The portable application is written to `build/tcg-epms/`. The optional hosted acceptance deployment under `hosting/` uses the same domain functions and a separate database for fictional acceptance records. The standalone service is the engineering deployment target.
+The portable application is written to `build/tcg-epms/`.  The standalone service is the engineering deployment target.

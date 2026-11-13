@@ -41,3 +41,9 @@ export function adjustedGrowth(nominal,start,end){
  const [n,d]=fraction(nominal),[a,b]=fraction(start),[c,e]=fraction(end);
  return halfUp((100n*d+n)*a*e-100n*d*b*c,d*b*c);
 }
+/** Compare an unrounded percentage against an integer policy threshold.
+ * @param {number} actual @param {number} target @param {number} threshold */
+export function meetsPercent(actual,target,threshold){
+ const [a,b]=fraction(actual),[c,d]=fraction(target);
+ return 100n*a*d>=BigInt(threshold)*b*c;
+}

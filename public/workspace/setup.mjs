@@ -27,7 +27,7 @@ export function setupChecklist(ctx,year){
  const steps=[];let blocked='';
  /** @param {string} title @param {string} owner @param {string} target @param {boolean} done @param {string} reason @param {boolean} optional @param {string} id */
  function step(title,owner,target,done,reason,optional=false,id=''){
-  steps.push({title,owner,target,id,status:done?'Done':blocked?'Blocked':'Not started',reason:done?'':blocked||reason,optional});
+  steps.push({title,owner,target,id,status:done?'Done':blocked||target==='setupCheck'&&(managers||missingTracks)?'Blocked':'Not started',reason:done?'':blocked||reason,optional});
   if(!optional&&!done&&!blocked)blocked=reason;
  }
  step('Import the roster','Administration','employee',staff.length>0,'Import the roster for '+year+'.');

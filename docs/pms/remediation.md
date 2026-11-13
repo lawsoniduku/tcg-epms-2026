@@ -40,3 +40,5 @@ This register maps the original release audit IDs to the implementation shipped 
 | L06 | Hosted request bodies enforce a byte limit while streaming | Verify normal and oversized synthetic requests on staging. |
 
 Corporate identity, payroll, notification delivery, backup restoration, assistive technology and representative load require acceptance in the target environment. Retain results with the release ticket.
+
+For the subsequent four-phase upgrade and the disposition of hosted-only findings, see [the change register](../../CHANGELOG.md).

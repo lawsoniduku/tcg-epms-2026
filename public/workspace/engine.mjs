@@ -131,6 +131,10 @@ export function view(s,actor,selection={}) {
     detail={canAttach:canAttach(s,actor,r),id:r.id,type:r.type,title:r.title,status:r.status,version:r.version,data:displayRecord(ctx,r),actions:catalogue[r.type].actions.filter(d=>allowed(ctx,r,d)).map(d=>form(ctx,r,d))};
     if(r.type==='review'){
       const ids=new Set([...(detail.data.calibrations??[]),...(detail.data.revisions??[])].map(entry=>entry.by));
+      for(const key of ['approvedBy','chair','by']){
+        for(const record of [detail.data.panel,detail.data.baseline,detail.data.assessment,detail.data.qualityReview])if(record?.[key])ids.add(record[key]);
+      }
+      if(detail.data.managerApproval)ids.add(detail.data.managerApproval);
       detail.people=Object.fromEntries(s.users.filter(u=>ids.has(u.id)).map(u=>[u.id,[...new Set([u.name,roles[u.role]])].join(' · ')]));
     }
     if(r.type==='review'&&detail.actions.some(a=>a.id==='review.goal')){

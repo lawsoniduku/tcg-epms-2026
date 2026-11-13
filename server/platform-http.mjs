@@ -7,7 +7,7 @@ import {resolve,extname} from 'node:path';
 import {randomBytes,randomUUID,timingSafeEqual,verify} from 'node:crypto';
 import {digest,matches,passwordHash} from './platform-db.mjs';
 import {execute,view,exportData,processDeadlines} from '../public/workspace/engine.mjs';
-import {need,requireThat,roles,isoDay} from '../public/workspace/model.mjs';
+import {csv,need,requireThat,roles,isoDay} from '../public/workspace/model.mjs';
 
 import {rosterAt} from '../public/workspace/roster.mjs';
 const root=resolve(new URL('../public/',import.meta.url).pathname);
@@ -58,9 +58,9 @@ export function platformHttp(store,opts={}){
         const employee=store.entity(profile.employeeId);
         return !!employee&&rosterAt(employee,isoDay(new Date().toISOString())).active!==false;
       };
-      const newSession=actor=>{
+      const newSession=(actor,method='password')=>{
         requireThat(activeProfile(actor),'Account is inactive.',401);if(session)db.prepare('DELETE FROM sessions WHERE token=?').run(session.token);
-        const valid=store.session(actor.id,actor.role);store.audit(actor.id,'sign-in');return send(200,{csrf:valid.csrf,changeRequired:!!actor.changeRequired},{'Set-Cookie':'pms_session='+valid.token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800'+(opts.secure?'; Secure':'')});
+        const valid=store.session(actor.id,actor.role,method);store.audit(actor.id,'sign-in');return send(200,{csrf:valid.csrf,changeRequired:method==='password'&&!!actor.changeRequired},{'Set-Cookie':'pms_session='+valid.token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800'+(opts.secure?'; Secure':'')});
       };
       if(post&&['/api/platform/login','/api/platform/sso'].includes(path)){
         const b=await body(req),bucket=digest(path+'|'+String(b.email??b.userId??digest(String(b.assertion??''))).trim().toLowerCase()),now=Date.now();
@@ -75,7 +75,7 @@ export function platformHttp(store,opts={}){
           const claims=assertSSO(b.assertion,opts);const user=db.prepare('SELECT * FROM accounts WHERE subject=?').get(claims.sub);requireThat(user,'Account has not been provisioned.',403);
           const replay=digest('sso:'+claims.jti);requireThat(!db.prepare('SELECT 1 FROM auth_limits WHERE bucket=? AND expires>?').get(replay,now),'Assertion already used.',401);db.prepare('INSERT OR REPLACE INTO auth_limits VALUES(?,1,?)').run(replay,claims.exp*1000);
           db.prepare('DELETE FROM auth_limits WHERE bucket=?').run(bucket);
-          return newSession(store.open(user.profile));
+          return newSession(store.open(user.profile),'sso');
         }
         const user=opts.demo?getAccount(String(b.userId)):db.prepare('SELECT * FROM accounts WHERE email=?').get(String(b.email??'').trim());
         if(!opts.demo){
@@ -136,7 +136,8 @@ export function platformHttp(store,opts={}){
       }
       requireThat(session,'Sign in to continue.',401);
       const account=getAccount(session.actor);requireThat(account,'Account unavailable.',401);const profile=store.open(account.profile);
-      if(profile.changeRequired)requireThat(['/api/platform/password','/api/platform/logout'].includes(path),'Change the provisioned password to continue.',403);
+      if(!opts.demo&&session.auth_method==='password')requireThat(opts.localLogin!=='off'&&!(opts.ssoKey&&privileged(profile)),'Use company sign-in.',401);
+      if(session.auth_method==='password'&&profile.changeRequired)requireThat(['/api/platform/password','/api/platform/logout'].includes(path),'Change the provisioned password to continue.',403);
       db.prepare('UPDATE sessions SET last_seen=? WHERE token=?').run(Date.now(),session.token);
       const grantedRoles=[...new Set([profile.role,...(profile.additionalRoles??[])])];
       const actor={...profile,role:session.active_role??profile.role,grantedRoles};
@@ -164,11 +165,29 @@ export function platformHttp(store,opts={}){
         const allowed=['review.importGoals','employee.import','commercial.import','batch.preview','migration.new'];
         requireThat(allowed.includes(b.action),'Unknown import.',400);
         let text=b.values.csv;
-        if(b.workbook){requireThat(b.action==='review.importGoals','Upload a CSV for this operation.',422);text=await workbook({op:'parse',bytes:b.workbook});}
+        if(b.workbook){
+          const current=view(store.readState(),actor,{id:b.id}).detail;
+          requireThat(current?.actions.some(a=>a.id==='review.importGoals'),'Draft unavailable.',403);
+          requireThat(b.action==='review.importGoals','Upload a CSV for this operation.',422);text=await workbook({op:'parse',bytes:b.workbook});}
         need(typeof text==='string'&&text.length<=350000,'Import is too large.');
         const s=store.readState();
         if(b.action==='review.importGoals'){
           const {drafts,...preview}=previewGoals(s,actor,b.id,text);return send(200,{...preview,csv:text});
+        }
+        if(b.action==='employee.import'){
+          requireThat(['pm','admin'].includes(actor.role),'Roster import unavailable.',403);
+          const entries=csv(text);need(entries.length<=2000,'Import up to 2,000 employees at a time.');
+          const copy=structuredClone(s),seen=new Set(),rows=[];
+          for(const [index,line] of entries.entries()){
+            try{
+              need(!seen.has(line.staffId),'Duplicate staff ID in import.');seen.add(line.staffId);
+              const quote=v=>'"'+String(v).replaceAll('"','""')+'"';
+              const csv=[Object.keys(line),Object.values(line)].map(r=>r.map(quote).join(',')).join('\n');
+              execute(copy,actor,{type:'employee',action:'employee.import',values:{csv}});
+              rows.push({row:index+2,employee:line.staffId,valid:true});
+            }catch(error){rows.push({row:index+2,employee:line.staffId,valid:false,error:error.message});}
+          }
+          return send(200,{rows,groups:[],valid:rows.every(row=>row.valid),csv:text});
         }
         const copy=structuredClone(s),result=execute(copy,actor,{...b,values:{...b.values,csv:text}});
         const record=copy.records.find(r=>r.id===result.id);
@@ -183,7 +202,7 @@ export function platformHttp(store,opts={}){
         }
         if(req.method==='GET')return send(200,{files:listEvidence(store,actor,url.searchParams.get('entity'))});
       }
-      if(post&&path==='/api/platform/role'){const b=await authorisedBody();requireThat(grantedRoles.includes(b.role),'Role unavailable.',403);return newSession({...profile,role:b.role});}
+      if(post&&path==='/api/platform/role'){const b=await authorisedBody();requireThat(grantedRoles.includes(b.role),'Role unavailable.',403);return newSession({...profile,role:b.role},session.auth_method);}
       if(req.method==='GET'&&path==='/api/platform/view'){const result=view(store.readState(),actor,{id:url.searchParams.get('id'),setupYear:Number(url.searchParams.get('year'))});store.audit(actor.id,'view',url.searchParams.get('id')??'overview');return send(200,{...result,csrf:session.csrf});}
       if(post&&path==='/api/platform/command'){const b=await authorisedBody();return send(200,store.command(actor.id,b.requestId,b,s=>execute(s,actor,b)));}
       if(req.method==='GET'&&path==='/api/platform/export'){const report=url.searchParams.get('report');const out=exportData(store.readState(),actor,report,url.searchParams.get('id'),Object.fromEntries(url.searchParams));store.audit(actor.id,'export.'+report);res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="performance-export.csv"'});return res.end(out);}

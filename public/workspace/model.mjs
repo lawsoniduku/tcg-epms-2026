@@ -1,3 +1,4 @@
+import {meetsPercent} from './decimal.mjs';
 import { DomainError, requireThat, ratingFor, scoreValue, trackAScore } from '../shared/domain.mjs';
 export { DomainError, requireThat, ratingFor, scoreValue, trackAScore };
 
@@ -165,8 +166,8 @@ export function evidenceScore(actual,kpi,stretch) {
   if(kpi.direction==='Binary outcome'){need(actual===0||actual===1,'Use 0 for fail or 1 for pass.');return kpi.anchors[actual];}
   if(kpi.direction==='Higher is better'){
     need(kpi.target>0,'A positive target is required.');
-    const attainment=actual/kpi.target*100;
-    return attainment>=120&&stretch?5:attainment>=105?4:attainment>=90?3:attainment>=70?2:1;
+    const meets=threshold=>meetsPercent(actual,kpi.target,threshold);
+    return meets(120)&&stretch?5:meets(105)?4:meets(90)?3:meets(70)?2:1;
   }
   const anchors=kpi.anchors;
   const comparison=kpi.direction==='Lower is better'?(a,b)=>a<=b:(a,b)=>a>=b;

@@ -60,6 +60,7 @@ function permitted(k){
 }
 function references(value){
  if(typeof value!=='string')return value;
+ if(state?.detail?.people&&Object.hasOwn(state.detail.people,value))return state.detail.people[value];
  if(/^\d{4}-\d{2}-\d{2}T/.test(value))return fmtDate(value);
  for(const rows of Object.values(state.rows)){const row=rows.find(r=>r.id===value);if(row)return row.title;}
  return value;
@@ -166,9 +167,12 @@ function reviewTables(r){
  table('360 competencies',[['Competency','competency'],['Mean','score']],d.feedback?.competencies??d.assessment?.behaviour?.competencies),
  table('Calibration',[['Panel score','score'],['Reason','reason'],['Recorded by','person'],['Time (Lagos)','time']],d.calibrations?.map(c=>({...c,person:r.people?.[c.by],time:c.at&&fmtDate(c.at)}))),
  table('Score revisions',[['Revision','revision'],['Supervisor','supervisor'],['Calibrated','calibrated'],['Deduction','deductionPoints'],['Final','finalScore'],['Recorded by','person']],d.revisions?.map(c=>({...c,person:r.people?.[c.by]})))];
- const extra=Object.fromEntries(Object.entries(d).filter(([k])=>!['goals','assessment','calibrations','revisions','supervisorScore','calibratedScore','finalScore'].includes(k)));
+ const extra=Object.fromEntries(Object.entries(d).filter(([k])=>!['goals','assessment','calibrations','revisions','supervisorScore','calibratedScore','finalScore','checkIns','baseline','panel','campaign'].includes(k)));
  if(extra.feedback)extra.feedback=Object.fromEntries(Object.entries(extra.feedback).filter(([k])=>k!=='competencies'));
- return fields.join('')+valueView(extra);
+ const checks=table('Check-ins',[['Type','kind'],['Progress','progress'],['Support','support'],['Follow-up','due']],d.checkIns);
+ const baseline=d.baseline?'<p>Baseline approved '+escape(d.baseline.at&&fmtDate(d.baseline.at))+' · '+escape(r.people?.[d.baseline.approvedBy]||'Head of function')+'</p>':'';
+ const feedback=d.assessment?.summary?'<h3>Assessment summary</h3><p>'+escape(d.assessment.summary)+'</p>':'';
+ return fields.join('')+checks+baseline+feedback+valueView(extra);
 }
 function timeline(history){
  const groups=[];

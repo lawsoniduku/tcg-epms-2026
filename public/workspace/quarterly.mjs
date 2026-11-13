@@ -1,7 +1,7 @@
 import {weighted,percent} from './decimal.mjs';
 import {feedbackActions,redactThemes} from './feedback.mjs';
 import {effectiveGoals} from './governance.mjs';
-import {action,addWorkdays,average,choices,create,dateValue,evidenceScore,field,get,heads,isRole,isoDay,journal,list,manages,need,nextStatus,noFields,note,notify,num,option,own,perspectives,pick,ratingFor,round,scoreValue,trackAScore,yes} from './model.mjs';
+import {action,addWorkdays,average,choices,create,dateValue,evidenceScore,field,get,heads,isRole,isoDay,journal,list,manages,need,nextStatus,noFields,note,notify,num,option,own,perspectives,pick,readFields,ratingFor,round,scoreValue,trackAScore,yes} from './model.mjs';
 import {finalisationPreview} from '../shared/domain.mjs';
 const cycle=(ctx,r)=>r.type==='probation'?r.feedbackConfig:get(ctx.s,r.cycleId,'cycle');
 const policy=(ctx,r)=>cycle(ctx,r).policy;
@@ -78,7 +78,11 @@ export const reviewActions=[
   ],(ctx,r,v)=>{
     const template=get(ctx.s,v.template,'template');
     need(template.goals.every(g=>!r.goals.some(existing=>existing.title.toLowerCase()===g.title.toLowerCase())),'A template KPI already exists on this scorecard.');
-    for(const goal of template.goals)r.goals.push({...structuredClone(goal),id:crypto.randomUUID(),template:template.id});
+    const fields=goalFields(ctx).map(f=>f.key==='objective'?{...f,choices:f.choices.filter(c=>ctx.scope(get(ctx.s,c.value)))}:f);
+    for(const goal of template.goals){
+      addGoal(r,readFields(fields,Object.fromEntries(fields.map(f=>[f.key,goal[f.key]??f.default??'']))));
+      r.goals.at(-1).template=template.id;
+    }
     return r;
   }),
   action('review.removeGoal','Remove KPI',goalsEditable,(ctx,r)=>[pick('goal','KPI',choices(r.goals))],(ctx,r,v)=>{r.goals=r.goals.filter(g=>g.id!==v.goal);return r;}),

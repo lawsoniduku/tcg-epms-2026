@@ -45,6 +45,7 @@ export function openPlatform(filename,{demo=false,key,feedbackKey=process.env.EP
   if(!db.prepare('PRAGMA table_info(sessions)').all().some(c=>c.name==='last_seen')){
     db.exec('ALTER TABLE sessions ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0');
   }
+  if(!db.prepare('PRAGMA table_info(sessions)').all().some(c=>c.name==='auth_method'))db.exec("ALTER TABLE sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'password'");
   const seal=obj=>{const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',cipherKey,iv);const content=Buffer.concat([cipher.update(JSON.stringify(obj),'utf8'),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),content]).toString('base64');};
   const open=value=>{const buf=Buffer.from(value,'base64'),decipher=createDecipheriv('aes-256-gcm',cipherKey,buf.subarray(0,12));decipher.setAuthTag(buf.subarray(12,28));return JSON.parse(Buffer.concat([decipher.update(buf.subarray(28)),decipher.final()]).toString());};
   const setting=k=>db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
@@ -135,7 +136,7 @@ export function openPlatform(filename,{demo=false,key,feedbackKey=process.env.EP
   }
   return {rotateFeedbackKey:()=>transaction(()=>{vault.rotate();invalidate();}),deadlines,db,load,readState,invalidate,entity,change,command,transaction,account,profiles,open,seal,
     audit(actor,operation,entity=''){db.prepare('INSERT INTO access_log(at,actor,operation,entity) VALUES(?,?,?,?)').run(new Date().toISOString(),actor,operation,entity);},
-    session(actor,role){const token=randomBytes(32).toString('hex'),csrf=randomBytes(24).toString('hex');db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());db.prepare('INSERT INTO sessions(token,actor,csrf,expires,active_role,last_seen) VALUES(?,?,?,?,?,?)').run(digest(token),actor,csrf,Date.now()+8*3600000,role??null,Date.now());return {token,csrf};},
+    session(actor,role,method='password'){const token=randomBytes(32).toString('hex'),csrf=randomBytes(24).toString('hex');db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());db.prepare('INSERT INTO sessions(token,actor,csrf,expires,active_role,last_seen,auth_method) VALUES(?,?,?,?,?,?,?)').run(digest(token),actor,csrf,Date.now()+8*3600000,role??null,Date.now(),method);return {token,csrf};},
     close(){db.close();}
   };
 }

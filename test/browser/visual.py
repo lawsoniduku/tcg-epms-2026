@@ -20,7 +20,7 @@ try:
                 box=action.first.bounding_box()
                 assert box and box['x']>=-1 and box['x']+box['width']<=width+1,(name,width,box)
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(name,width)
-                page.screenshot(path=str(output/f'{name}-{width}.png'),animations='disabled')
+                page.screenshot(path=str(output/f'{name}-{width}.png'),animations='disabled',full_page=name not in ['kpi-dialog','kpi-preview'])
             page.goto(base)
             capture('login',page.locator('#signin button'))
             page.locator('[name=userId]').select_option('manager')

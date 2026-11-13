@@ -157,3 +157,34 @@ test('confidential response versions survive data-key rotation independently of 
  const lookup=async id=>{const res=await fetch(f.base+'/api/platform/raw-response/'+id,{headers:{cookie:manager.cookie}});return [res.status,await res.text()];};
  const denial=await lookup('privacy-fixture');assert.equal(denial[0],404);assert.deepEqual(denial,await lookup('absent-fixture'));
 });
+test('backup CLI creates an owner-only database even under a permissive umask',async t=>{
+ const {spawnSync}=await import('node:child_process'),{statSync}=await import('node:fs');
+ const f=await fixture(t);
+ const path=join(f.dir,'backup.sqlite');
+ const result=spawnSync(process.execPath,['server/platform.mjs','--backup'],{env:{...process.env,EPMS_DB_PATH:f.file,EPMS_BACKUP_PATH:path,EPMS_DATA_KEY:f.key.toString('base64')}});
+ assert.equal(result.status,0,result.stderr.toString());assert.equal(statSync(path).mode&0o777,0o600);
+});
+test('roster preview reports bad rows without committing other rows',async t=>{
+ const f=await fixture(t,{demo:true}),admin=await f.login({userId:'admin'});
+ const csv='staffId,name,email,company,department,jobTitle,managerId,confirmed,commercial,peopleManager,joinedAt\nFA,Example A,example-a@example.invalid,TCG,Operations,Analyst,manager,Yes,No,No,2025-01-01\nFB,Example B,bad,TCG,Operations,Analyst,manager,Yes,No,No,2025-01-01';
+ const count=f.store.load().records.length;
+ const preview=await f.post('import-preview',{type:'employee',action:'employee.import',values:{csv}},admin);
+ assert.equal(preview.status,200);const result=await preview.json();
+ assert.deepEqual(result.rows.map(r=>r.valid),[true,false]);assert.equal(result.valid,false);assert.equal(f.store.load().records.length,count);
+});
+test('login limits are keyed by transport peer across different account names',async t=>{
+ const f=await fixture(t),{digest}=await import('../server/platform-db.mjs');
+ f.store.db.prepare('INSERT INTO auth_limits VALUES(?,90,?)').run(digest('ip:127.0.0.1'),Date.now()+60000);
+ for(const email of ['a@example.invalid','admin@example.invalid']){
+  assert.equal((await f.post('login',{email,password:pwd})).status,429);
+ }
+});
+test('integration roster cannot reassign the manager of a privileged account',async t=>{
+ const f=await fixture(t,{demo:true,opts:{rosterToken:'roster-fixture'}});
+ const employee=f.store.load().records.find(r=>r.type==='employee'&&r.staffId==='T001');
+ f.store.account({id:'dual-priv',role:'employee',additionalRoles:['finance'],name:'Fixture Finance',email:'priv@example.invalid',employeeId:employee.id});
+ f.store.account({id:'second-manager',role:'manager',name:'Fixture Manager',email:'second@example.invalid'});
+ const csv='staffId,name,email,company,department,jobTitle,managerId,confirmed,commercial,peopleManager,joinedAt\n'+[employee.staffId,employee.title,employee.email,employee.company,employee.department,employee.jobTitle,'second-manager','Yes','No','No',employee.joinedAt].join(',');
+ const response=await fetch(f.base+'/api/integration/roster',{method:'POST',headers:{authorization:'Bearer roster-fixture','Content-Type':'application/json'},body:JSON.stringify({requestId:randomUUID(),csv})});
+ assert.equal(response.status,422);assert.equal(f.store.entity(employee.id).managerId,employee.managerId);
+});

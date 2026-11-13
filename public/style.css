@@ -41,3 +41,8 @@
  .record-list tr{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px;padding:12px;border-bottom:1px solid var(--line)}
  .record-list td{border:0;padding:2px;white-space:normal;overflow-wrap:anywhere}.record-list td:first-child{grid-column:1/-1}.record-list td:last-child{grid-column:2;grid-row:2/5}
 }
+#setup-year{width:7rem;margin-left:.5rem;padding:.5rem;border:1px solid #8497a5;border-radius:5px}
+.content:has(#setup-year) .metric-grid{margin:1rem 0}
+.content:has(#setup-year) ol{list-style:decimal;padding-left:1.75rem}
+.content:has(#setup-year) li{padding:.85rem .5rem;border-bottom:1px solid var(--line)}
+.content:has(#setup-year) li p{margin:.25rem 0;color:#435566}.content:has(#setup-year) li a{display:inline-flex;align-items:center;min-height:44px}
