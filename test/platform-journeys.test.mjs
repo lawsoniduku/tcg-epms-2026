@@ -290,3 +290,15 @@ test('PM configures a draft cycle, freezes custom questions and weights at launc
  const {compositeScore}=await import('../public/workspace/quarterly.mjs');
  assert.equal(compositeScore([{rating:5,weight:100}],{units:2,divisor:1},r.componentWeights),3.8);
 });
+
+test('manager inbox follows the self-review handoff, independently of stale reminders',()=>{
+ const j=journey(false),r=new360(j);goalSet(j,r);
+ j.doIt('manager',r,'openSelf');const self={development:'Development plan'};
+ for(const g of r.goals){self['score_'+g.id]=4;self['note_'+g.id]='Evidence';}
+ j.doIt('employee',r,'self',self);
+ const tasks=who=>view(j.s,j.user(who)).tasks.filter(t=>t.id===r.id);
+ assert.deepEqual(tasks('manager').map(t=>t.action),['review.assess']);
+ assert.equal(tasks('manager')[0].due,list(j.s,'cycle').find(c=>c.id===r.cycleId).managerDue);
+ assert.equal(tasks('employee').some(t=>t.action==='review.assess'),false);
+ r.status='Calibration';assert.equal(tasks('manager').length,0);
+});

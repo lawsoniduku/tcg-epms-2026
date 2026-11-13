@@ -42,6 +42,16 @@ try:
             nav = page.get_by_role('navigation', name='Main navigation')
             nav.get_by_role('link', name=destination, exact=True).click()
             expect(nav.get_by_role('link', name=destination, exact=True)).to_have_class('nav-link active')
+            if user == 'manager':
+                nav.get_by_role('link',name='My tasks',exact=True).click()
+                task=page.locator('[data-task="review.assess"]').first
+                expect(task).to_be_visible()
+                task.click()
+                expect(page.locator('dialog')).to_be_visible()
+                expect(page.locator('#dialog-title')).to_have_text('Submit supervisor assessment')
+                page.locator('[data-cancel]').click()
+                page.get_by_role('link',name='My tasks',exact=True).last.click()
+                expect(page.get_by_role('heading',name='My tasks')).to_be_visible()
             if user == 'pm':
                 expect(page.get_by_role('heading',name='Review management',exact=True)).to_be_visible()
                 with page.expect_download() as download_info:

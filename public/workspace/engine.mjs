@@ -1,3 +1,4 @@
+import {nextTask,confirmationStep} from './work-queue.mjs';
 import {questionsFor,defaultWeights} from './review-design.mjs';
 import {importGoals} from './goal-import.mjs';
 import {setupChecklist,reviewTracks} from './setup.mjs';
@@ -118,18 +119,33 @@ function permittedRecords(ctx,type){return list(ctx.s,type).filter(r=>ctx.scope(
 export function view(s,actor,selection={}) {
   s=indexedProjection(s);
   const ctx=context(s,actor);
-  const available={};const rows={};
+  const available={};const rows={};const tasks=[];
   for(const [type,defs] of Object.entries(catalogue)){
     const allowedCreates=(defs.new??[]).filter(d=>allowed(ctx,null,d)).map(d=>form(ctx,null,d));
     const visible=permittedRecords(ctx,type);
     rows[type]=visible.map(r=>({id:r.id,title:r.title,status:r.status,version:r.version,employee:personName(s,r),...(r.type==='talent'?{potential:r.potential,performance:r.performance}:{}),department:r.snapshot?.department??r.department??'',cycle:r.cycleId?s.records.find(x=>x.id===r.cycleId)?.title:'',manager:r.snapshot?.managerId??r.managerId??'',updatedAt:r.updatedAt??r.createdAt,actionCount:defs.actions.filter(d=>allowed(ctx,r,d)).length}));
+    visible.forEach((r,i)=>{
+      const task=nextTask(ctx,r,defs.actions.filter(d=>allowed(ctx,r,d)),s.byId.get(r.cycleId));
+      if(task)tasks.push({...rows[type][i],type,...task});
+      if(type==='probation')rows[type][i].step=confirmationStep(r);
+    });
     available[type]=allowedCreates;
+  }
+  const planCreation=available.probation.find(a=>a.id==='probation.new');
+  const planned=new Set(list(s,'probation').map(r=>r.employeeId));
+  for(const employee of planCreation?.fields.find(f=>f.key==='employeeId')?.choices??[]){
+    if(planned.has(employee.value))continue;
+    const e=s.byId.get(employee.value);
+    if(!e||actor.role!=='manager'||e.managerId!==actor.id)continue;
+    const reminder=s.outbox.find(n=>n.key==='confirmation-plan:'+e.id+':'+actor.id);
+    tasks.push({id:'',type:'probation',action:'probation.new',employeeId:e.id,label:'Create confirmation plan',title:e.title,reason:'New employee awaiting a plan',due:reminder?.due??null});
   }
   let detail=null;
   if(selection.id){
     const r=s.records.find(r=>r.id===selection.id);
     requireThat(r&&ctx.scope(r),'Record unavailable in your scope.',404);
     detail={canAttach:canAttach(s,actor,r),id:r.id,type:r.type,title:r.title,status:r.status,version:r.version,data:displayRecord(ctx,r),actions:catalogue[r.type].actions.filter(d=>allowed(ctx,r,d)).map(d=>form(ctx,r,d))};
+    if(r.type==='probation')detail.step=confirmationStep(r);
     if(r.type==='review'){
       const ids=new Set([...(detail.data.calibrations??[]),...(detail.data.revisions??[])].map(entry=>entry.by));
       for(const key of ['approvedBy','chair','by']){
@@ -162,7 +178,7 @@ export function view(s,actor,selection={}) {
     if(r.development)aggregates.development++;
     if(!['Closed','Approved exception'].includes(r.status))aggregates.outstanding[r.status]=(aggregates.outstanding[r.status]??0)+1;
   }
-  return {setup:isRole(actor,'pm','admin')?setupChecklist(ctx,Number.isInteger(selection.setupYear)&&selection.setupYear>=2000&&selection.setupYear<=2200?selection.setupYear:new Date(ctx.at).getUTCFullYear()):undefined,trends:isRole(actor,'pm','hod','finance','executive','er','auditor')?outcomeTrends(ctx):[],operations:isRole(actor,'pm','hod','manager','executive','auditor')?operationsRows(ctx):[],aggregates,actor:{id:actor.id,name:actor.name,role:actor.role,grantedRoles:actor.grantedRoles??[actor.role],department:actor.department},roles,sections:labels,rows,available,detail,audit,notices,revision:s.revision};
+  return {tasks:tasks.sort((a,b)=>(a.due??'9999').localeCompare(b.due??'9999')||a.title.localeCompare(b.title)),setup:isRole(actor,'pm','admin')?setupChecklist(ctx,Number.isInteger(selection.setupYear)&&selection.setupYear>=2000&&selection.setupYear<=2200?selection.setupYear:new Date(ctx.at).getUTCFullYear()):undefined,trends:isRole(actor,'pm','hod','finance','executive','er','auditor')?outcomeTrends(ctx):[],operations:isRole(actor,'pm','hod','manager','executive','auditor')?operationsRows(ctx):[],aggregates,actor:{id:actor.id,name:actor.name,role:actor.role,grantedRoles:actor.grantedRoles??[actor.role],department:actor.department},roles,sections:labels,rows,available,detail,audit,notices,revision:s.revision};
 }
 function personName(s,r){return r.type==='employee'?r.title:(s.byId?s.byId.get(r.employeeId):s.records.find(e=>e.id===r.employeeId))?.title??'';}
 import {trackAt} from './governance.mjs';

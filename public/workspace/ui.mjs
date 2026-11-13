@@ -1,6 +1,6 @@
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog'),toast=document.querySelector('#toast');
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const extra={manageReviews:'Review overview',setup:'Set up a review cycle',home:'Home',inbox:'My tasks',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
+const extra={notices:'Notifications',manageReviews:'Review overview',setup:'Set up a review cycle',home:'Home',inbox:'My tasks',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
 const reviewPages=['review','response','commercial','probation'];
 const outcomePages=['appeal','capability','recognition','talent','exception'];
 const rewardPages=['merit','payBasis','meritException','scenario'];
@@ -52,7 +52,7 @@ function button(title,attributes,secondary=false){return '<button class="button 
 function permitted(k){
  if(k==='manageReviews')return state.actor.role==='pm';
  if(k==='setup')return !!state.setup;
- if(['home','inbox'].includes(k))return true;
+ if(['home','inbox','notices'].includes(k))return true;
  if(k==='reports')return ['manager','hod','executive','finance','pm','auditor','er','talent'].includes(state.actor.role);
  if(['employee','manager','hod','pm'].includes(state.actor.role)&&['review','response','employee'].includes(k))return true;
  if(k==='accounts')return state.actor.role==='admin'&&info.mode==='live';
@@ -106,10 +106,14 @@ function routeError(error){
  const main=document.querySelector('#main');
  if(main){main.inert=false;main.removeAttribute('aria-busy');main.innerHTML='<section class="panel panel-body"><h1>Unable to load this page</h1><p>'+escape(error.message)+'</p>'+button('Retry loading','data-refresh')+'</section>';}
 }
-function go(type,id=''){
+function go(type,id='',action='',employeeId=''){
  leaveView();
  section=type;selected=id;listPage=0;query='';filter=department=cycle=manager='All';menuOpen=false;
- location.hash=type+(id?'/'+id:'');reload().then(()=>document.querySelector('#main')?.focus({preventScroll:true})).catch(routeError);
+ location.hash=type+(id?'/'+id:'');reload().then(()=>{
+ if(section!==type||selected!==id)return;
+ document.querySelector('#main')?.focus({preventScroll:true});
+ if(action){const form=(id?state.detail?.actions:state.available[type])?.find(a=>a.id===action);if(form){openForm(form);if(employeeId){const field=dialog.querySelector('[name=employeeId]');if(field)field.value=employeeId;}}else say('This task has changed. Check My tasks for the current step.');}
+ }).catch(routeError);
 }
 function login(){++requestVersion;if(dialog.open)dialog.close();currentForm=null;csrf=null;accounts=null;files=[];menuOpen=false;
  for(const k of Object.keys(reportFilters))reportFilters[k]='';
@@ -132,14 +136,35 @@ function rowTable(rows,type){
  }
  return '<div class="table-scroll record-list"><table><thead><tr><th>Record</th><th>Stage</th><th>Department</th><th>Updated</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+escape(r.title)+'</strong>'+(r.cycle?'<small class="subline">'+escape(r.cycle)+'</small>':'')+'</td><td>'+tag(r.status)+'</td><td>'+escape(r.department||'—')+'</td><td>'+escape(fmtDate(r.updatedAt))+'</td><td>'+button('Open','aria-label="Open '+escape(r.title)+'" data-record="'+escape(r.id)+'" data-type="'+escape(type??r.type)+'"',true)+'</td></tr>').join('')+'</tbody></table></div>';
 }
-const assignedTasks=()=>flat().filter(r=>r.actionCount&&!['Closed','Published','Approved','Applied','Reconciled','Exported','Acknowledged','Approved exception'].includes(r.status));
 const flat=()=>Object.entries(state.rows).flatMap(([type,rs])=>rs.map(r=>({...r,type})));
+function taskRows(tasks){
+ if(!tasks.length)return '<p class="empty">You’re up to date. Work appears here when a review reaches your step.</p>';
+ return '<ul class="work-list">'+tasks.map(t=>'<li><div><strong>'+escape(t.label)+'</strong><p>'+escape(t.title)+'</p><small>'+escape([t.reason,t.due?'Due '+dayLabel(t.due):''].filter(Boolean).join(' · '))+'</small></div>'+button('Continue','data-task="'+escape(t.action)+'" data-id="'+escape(t.id)+'" data-kind="'+escape(t.type)+'" data-employee="'+escape(t.employeeId??'')+'" aria-label="Continue: '+escape(t.label)+' for '+escape(t.title)+'"',true)+'</li>').join('')+'</ul>';
+}
+const dayLabel=d=>new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(d+'T12:00:00Z'));
+function inbox(){
+ return heading('My tasks','Work assigned to you as '+state.roles[state.actor.role].toLowerCase()+'.')+'<section class="panel"><div class="panel-head"><h2>Awaiting your action ('+state.tasks.length+')</h2></div>'+taskRows(state.tasks)+'</section>';
+}
+function notices(){
+ return heading('Notifications','Recent reminders and activity.')+'<div class="panel panel-body">'+(state.notices.map(n=>'<p>'+escape(n.message)+(n.due?' · '+escape(dayLabel(n.due)):'')+'</p>').join('')||'<p>No recent notifications.</p>')+'</div>';
+}
+function confirmations(){
+ const plans=state.rows.probation??[];
+ return heading('Confirmation','Follow each employee from plan approval through the confirmation decision.',commands('probation'))+'<section class="panel"><div class="panel-head"><h2>Confirmation plans</h2></div>'+(plans.length?'<ul class="work-list">'+plans.map(r=>'<li><div><strong>'+escape(r.employee||r.title)+'</strong><p>'+escape(r.step.label)+'</p><small>'+escape([r.step.owner,r.step.due?dayLabel(r.step.due):''].filter(Boolean).join(' · '))+'</small></div>'+button('View plan','data-record="'+escape(r.id)+'" data-type="probation"',true)+'</li>').join('')+'</ul>':'<p class="empty">No confirmation plans in your scope. '+(state.available.probation?.length?'Create a plan for an eligible employee.':'Your line manager starts the confirmation plan.')+'</p>')+'</section>';
+}
+function confirmationDetail(r){
+ const d=r.data,step=r.step,act=r.actions.find(a=>a.id===step.action);
+ const stages=['Plan approval','Month 1 checkpoint','Month 3 checkpoint','Month 5 checkpoint','Final assessment','HR and ER review','Decision approval'];
+ if(r.status==='Extension review')stages.push('Extension review');
+ const cells=stages.map((stage,i)=>{const checkpoint=d.checkpoints?.find(c=>c.month===[1,3,5][i-1]);return '<li '+(stage===r.status?'aria-current="step"':'')+'><strong>'+escape(stage)+'</strong> '+escape(checkpoint?'Completed '+dayLabel(checkpoint.discussed):stage===r.status?'Current step':i>0&&i<4&&d.dates?.[i-1]?dayLabel(d.dates[i-1]):'')+'</li>';});
+ return '<section class="panel panel-body"><h2>'+escape(step.label)+'</h2><p>'+escape([step.owner,step.due?'Due '+dayLabel(step.due):''].filter(Boolean).join(' · '))+'</p>'+(act?button(act.label,'data-command="'+escape(act.id)+'"'):'')+'</section><section class="panel panel-body"><h2>Confirmation milestones</h2><ol class="milestones">'+cells.join('')+'</ol></section>';
+}
 function home(){
- const reviews=state.rows.review??[],open=reviews.filter(r=>!['Closed','Approved exception'].includes(r.status)),todo=assignedTasks().sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
- return heading(({employee:'My performance',manager:'Team overview',hod:'Function overview',finance:'Compensation overview',auditor:'Audit overview',er:'Employee relations overview',talent:'Talent overview'})[state.actor.role]??'Performance overview',[...new Set([state.actor.name,state.roles[state.actor.role]])].join(' · '))+grid([['Performance reviews',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+rowTable(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Formal appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
+ const reviews=state.rows.review??[],open=reviews.filter(r=>!['Closed','Approved exception'].includes(r.status)),todo=state.tasks;
+ return heading(({employee:'My performance',manager:'Team overview',hod:'Function overview',finance:'Compensation overview',auditor:'Audit overview',er:'Employee relations overview',talent:'Talent overview'})[state.actor.role]??'Performance overview',[...new Set([state.actor.name,state.roles[state.actor.role]])].join(' · '))+grid([['Performance reviews',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+taskRows(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Formal appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
 }
 function filterSelect(id,title,values,selected){return '<label class="filter-label">'+escape(title.replace(/^All /,''))+'<select aria-label="'+escape(title)+'" id="'+id+'"><option value="All">'+escape(title)+'</option>'+[...new Set(values.filter(Boolean))].sort().map(x=>'<option '+(selected===x?'selected':'')+'>'+escape(x)+'</option>').join('')+'</select></label>';}
-function filtered(){let rs=section==='inbox'?assignedTasks():state.rows[section]??[];return rs.filter(r=>(filter==='All'||r.status===filter)&&(department==='All'||r.department===department)&&(cycle==='All'||r.cycle===cycle)&&(manager==='All'||r.manager===manager)&&(r.title+' '+r.employee+' '+r.department).toLowerCase().includes(query.toLowerCase()));}
+function filtered(){let rs=state.rows[section]??[];return rs.filter(r=>(filter==='All'||r.status===filter)&&(department==='All'||r.department===department)&&(cycle==='All'||r.cycle===cycle)&&(manager==='All'||r.manager===manager)&&(r.title+' '+r.employee+' '+r.department).toLowerCase().includes(query.toLowerCase()));}
 function talentGrid(){
  const levels=['Developing','Effective','High'],potential=['High','Established','Developing'];
  return '<section class="panel"><div class="panel-head"><h2>Performance and potential</h2></div><div class="table-scroll"><table><thead><tr><th>Potential / performance</th>'+levels.map(l=>'<th>'+l+'</th>').join('')+'</tr></thead><tbody>'+potential.map(p=>'<tr><th>'+p+'</th>'+levels.map(l=>'<td>'+(state.rows.talent.filter(r=>r.performance===l&&r.potential===p).map(r=>button(r.employee,'data-type="talent" data-record="'+escape(r.id)+'"',true)).join(' ')||'—')+'</td>').join('')+'</tr>').join('')+'</tbody></table></div></section>';
@@ -151,7 +176,7 @@ function pagedResults(){
  const controls=rows.length<=size?'':'<div class="panel-foot"><button data-list-step="-1" '+(!listPage?'disabled':'')+'>Previous</button><span role="status">'+(start+1)+'–'+Math.min(start+size,rows.length)+' of '+rows.length+'</span><button data-list-step="1" '+(start+size>=rows.length?'disabled':'')+'>Next</button></div>';
  return rowTable(rows.slice(start,start+size),section==='inbox'?null:section)+controls;
 }
-function listing(){const rows=section==='inbox'?assignedTasks():state.rows[section];return heading(navLabel(section),'',commands(section))+(section==='talent'?talentGrid():'')+(section==='inbox'&&state.notices.length?'<div class="panel"><div class="panel-head"><h2>Notifications</h2></div><div class="panel-body">'+state.notices.slice(0,8).map(n=>'<p>'+escape(n.message)+(n.due?' · Due '+escape(n.due):'')+'</p>').join('')+'</div></div>':'')+'<section class="panel"><div class="filterbar"><input id="query" type="search" aria-label="Search records" placeholder="Search records" value="'+escape(query)+'">'+filterSelect('stage','All stages',rows.map(r=>r.status),filter)+filterSelect('dept','All departments',rows.map(r=>r.department),department)+(section==='review'?filterSelect('cycle','All cycles',rows.map(r=>r.cycle),cycle)+filterSelect('manager','All managers',rows.map(r=>r.manager),manager):'')+'</div><div id="results">'+pagedResults()+'</div></section>';}
+function listing(){const rows=state.rows[section];return heading(navLabel(section),'',commands(section))+(section==='talent'?talentGrid():'')+'<section class="panel"><div class="filterbar"><input id="query" type="search" aria-label="Search records" placeholder="Search records" value="'+escape(query)+'">'+filterSelect('stage','All stages',rows.map(r=>r.status),filter)+filterSelect('dept','All departments',rows.map(r=>r.department),department)+(section==='review'?filterSelect('cycle','All cycles',rows.map(r=>r.cycle),cycle)+filterSelect('manager','All managers',rows.map(r=>r.manager),manager):'')+'</div><div id="results">'+pagedResults()+'</div></section>';}
 function scorePanel(r){
  if(r.type!=='review')return '';
  const d=r.data, final=d.finalScore??d.revisions?.at(-1)?.finalScore;
@@ -182,7 +207,7 @@ function timeline(history){
 }
 function detail(){
  const r=state.detail;if(!r)return '<div class="empty">Record unavailable.</div>';
- return '<button class="text-btn back" data-nav="'+escape(section)+'">← Back to '+escape(navLabel(section))+'</button>'+heading(r.title,navLabel(r.type)+' · Revision '+r.version,tag(r.status))+(r.type==='cycle'&&['pm','auditor','executive'].includes(state.actor.role)?'<p><a class="button secondary" href="/api/platform/cycle-report.xlsx?id='+encodeURIComponent(r.id)+'">Download cycle appraisal report (.xlsx)</a></p>':'')+scorePanel(r)+(r.related?.length?'<div class="panel"><div class="panel-head"><h2>Employee reviews and actions</h2></div>'+rowTable(r.related)+'</div>':'')+'<div class="detail-grid"><section><div class="panel"><div class="panel-head"><h2>Record details</h2></div><div class="panel-body">'+(r.type==='review'?reviewTables(r):valueView(r.data))+'</div></div>'+evidencePanel(r)+'</section><aside><div class="panel"><div class="panel-head"><h2>Available actions</h2></div><div class="panel-body action-stack">'+(commands(section,r)||'<p class="muted">No action is due from your role at this stage.</p>')+(r.type==='merit'&&['Exported','Reconciled'].includes(r.status)&&state.actor.role==='finance'?button('Download payroll instructions','data-export="payroll"',true):'')+'</div></div><div class="panel"><div class="panel-head"><h2>Activity</h2></div><div class="panel-body timeline">'+(timeline(r.history)||'<p class="muted">No visible events.</p>')+'</div></div></aside></div>';
+ return (['review','response','probation'].includes(r.type)?'<a class="task-back" href="#inbox">My tasks</a>':'')+'<button class="text-btn back" data-nav="'+escape(section)+'">← Back to '+escape(navLabel(section))+'</button>'+heading(r.title,navLabel(r.type)+' · Revision '+r.version,tag(r.status))+(r.type==='cycle'&&['pm','auditor','executive'].includes(state.actor.role)?'<p><a class="button secondary" href="/api/platform/cycle-report.xlsx?id='+encodeURIComponent(r.id)+'">Download cycle appraisal report (.xlsx)</a></p>':'')+(r.type==='probation'?confirmationDetail(r):scorePanel(r))+(r.related?.length?'<div class="panel"><div class="panel-head"><h2>Employee reviews and actions</h2></div>'+rowTable(r.related)+'</div>':'')+'<div class="detail-grid"><section><div class="panel"><div class="panel-head"><h2>Record details</h2></div><div class="panel-body">'+(r.type==='review'?reviewTables(r):valueView(r.data))+'</div></div>'+evidencePanel(r)+'</section><aside><div class="panel"><div class="panel-head"><h2>Available actions</h2></div><div class="panel-body action-stack">'+(commands(section,r)||'<p class="muted">No action is due from your role at this stage.</p>')+(r.type==='merit'&&['Exported','Reconciled'].includes(r.status)&&state.actor.role==='finance'?button('Download payroll instructions','data-export="payroll"',true):'')+'</div></div><div class="panel"><div class="panel-head"><h2>Activity</h2></div><div class="panel-body timeline">'+(timeline(r.history)||'<p class="muted">No visible events.</p>')+'</div></div></aside></div>';
 }
 const reportFilters={cycle:'',frequency:'',company:'',department:'',manager:''};
 function operationsReport(){
@@ -237,13 +262,13 @@ function setupPage(){
 document.addEventListener('click',e=>{if(e.target.closest('[data-setup-link]'))returnToSetup=true;});
 document.addEventListener('change',e=>{if(e.target.id==='setup-year'&&e.target.validity.valid){setupYear=Number(e.target.value);reload().catch(routeError);}});
 function render(){
- const content=selected?detail():section==='manageReviews'?manageReviews():section==='setup'?setupPage():section==='home'?home():section==='reports'?reports():section==='audit'?audit():section==='accounts'?accountsPage():listing();
+ const content=selected?detail():section==='inbox'?inbox():section==='notices'?notices():section==='probation'?confirmations():section==='manageReviews'?manageReviews():section==='setup'?setupPage():section==='home'?home():section==='reports'?reports():section==='audit'?audit():section==='accounts'?accountsPage():listing();
  const groups=navigation(),current=groups.find(g=>g.keys.includes(section));
  const link=(key,title,ic,active)=>'<a href="#'+key+'" class="nav-link '+(active?'active':'')+'" '+(active?'aria-current="'+(key===section?'page':'location')+'"':'')+'>'+navIcon(ic)+escape(title)+'</a>';
  const tabs=current&&current.keys.length>1?'<nav class="section-tabs" aria-label="'+escape(current.title)+'">'+current.keys.map(k=>'<a href="#'+k+'" '+(k===section?'aria-current="page"':'')+'>'+escape(navLabel(k))+'</a>').join('')+'</nav>':'';
  const sidebar='<aside id="primary-sidebar" class="sidebar">'+logo()+'<button class="drawer-close" data-menu aria-label="Close navigation">×</button><nav class="sidebar-scroll" aria-label="Main navigation">'+
-   link('home','Home','home',section==='home')+link('inbox','My tasks','inbox',section==='inbox')+
-   '<div class="nav-caption">'+escape(state.roles[state.actor.role])+'</div>'+groups.map(g=>link(g.keys[0],g.title,g.icon,g===current)).join('')+
+   link('home','Home','home',section==='home')+link('inbox','My tasks','inbox',section==='inbox')+link('notices','Notifications','inbox',section==='notices')+
+   '<div class="nav-caption">'+escape(state.roles[state.actor.role])+'</div>'+groups.map(g=>link(g.keys[0],g.title,g.icon,g===current)+(g===current&&g.keys.length>1?'<div class="subnav">'+g.keys.map(k=>'<a href="#'+k+'" '+(k===section?'aria-current="page"':'')+'>'+escape(navLabel(k))+'</a>').join('')+'</div>':'')).join('')+
    '</nav><div class="side-bottom"><button class="text-btn" data-signout>Sign out</button></div></aside>';
  app.innerHTML='<div class="shell '+(menuOpen?'menu-open':'')+'">'+sidebar+(menuOpen?'<button class="drawer-shade" data-menu aria-label="Dismiss navigation"></button>':'')+
    '<div class="workspace" '+(menuOpen?'inert':'')+'><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-menu aria-label="Open navigation" aria-controls="primary-sidebar" aria-expanded="'+menuOpen+'">☰</button><span>Performance</span><span>/</span><strong>'+escape(current?.title??navLabel(section))+'</strong></div><div class="user-top">'+roleSelector()+'<div class="avatar">'+escape(state.actor.name.split(' ').slice(0,2).map(n=>n[0]).join(''))+'</div><div class="user-info"><strong>'+escape(state.actor.name)+'</strong><small>'+escape(state.roles[state.actor.role])+'</small></div></div></header>'+
@@ -322,7 +347,7 @@ async function download(report){
  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=report+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 document.addEventListener('click',async e=>{
- const route=e.target.closest('.nav-link,.section-tabs a');
+ const route=e.target.closest('.nav-link,.subnav a,.section-tabs a');
  if(route&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey){e.preventDefault();if(!working)go(route.hash.slice(1));return;}
  const b=e.target.closest('button');if(!b||working)return;
  try{
@@ -331,6 +356,7 @@ document.addEventListener('click',async e=>{
   else if(b.hasAttribute('data-refresh'))go(section,selected);
   else if(b.dataset.listStep){listPage+=Number(b.dataset.listStep);document.querySelector('#results').innerHTML=pagedResults();document.querySelector('#results button[data-list-step]:not([disabled])')?.focus();}
   else if(b.dataset.nav)go(b.dataset.nav);
+  else if(b.dataset.task)go(b.dataset.kind,b.dataset.id,b.dataset.task,b.dataset.employee);
   else if(b.dataset.record)go(b.dataset.type,b.dataset.record);
   else if(b.dataset.command==='review.applyTemplate'){openForm(state.detail.actions.find(a=>a.id==='review.importGoals'));const choices=dialog.querySelector('details');if(choices)choices.open=true;}
   else if(b.dataset.command){const options=selected?state.detail.actions:state.available[section];openForm(options.find(x=>x.id===b.dataset.command));}
