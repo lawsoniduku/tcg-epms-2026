@@ -17,9 +17,16 @@ function goalSet(j,r){
  ['Financial','Customer','Process','Learning'].forEach((perspective,i)=>j.doIt('manager',r,'goal',{title:perspective+' test',objective,perspective,outcome:'Deliver outcome',weight:[20,20,50,10][i],baseline:60,target:100,unit:'units',direction:'Higher is better',thresholds:'',source:'Source ledger',evidence:'Period report',leadership:'No',gateCap:5,gate:''}));
  j.doIt('manager',r,'submitGoals');j.doIt('manager',r,'managerApprove',{discussion:'Discussed and agreed targets with employee'});j.doIt('pm',r,'qa',{qa:'Checked sources, weights and standards'});j.doIt('hod',r,'baseline',{reference:'AUTH'});
 }
+function readyCycle(j,year){
+ const policy=list(j.s,'policy')[0];
+ j.act('pm','setupCheck','setupCheck.review',{year,authority:'Fixture',findings:'Reviewed'});
+ const schedule=j.act('pm','cadence','cadence.new',{year,frequency:'Quarterly',policyId:policy.id,reason:'Fixture',targetBasis:'Period',authority:'Fixture'});
+ j.doIt('pm',schedule,'activate',{approval:'Fixture'});
+ return list(j.s,'cycle').find(c=>c.cadenceId===schedule.id);
+}
 function new360(j){
  const policy=list(j.s,'policy')[0];
- const c=j.act('pm','cycle','cycle.new',{title:'Q1 2027 test',start:'2027-01-01',end:'2027-03-31',policyId:policy.id,behaviourMode:'Full 360',selfDue:'2027-03-31',managerDue:'2027-04-07',calibrationDue:'2027-04-14',closeDue:'2027-04-21'});
+ const c=readyCycle(j,2027);
  j.doIt('pm',c,'open');return list(j.s,'review').find(r=>r.cycleId===c.id);
 }
 function feedback(j,r,who,category){
@@ -212,6 +219,7 @@ test('v4.2 CAD-01 to CAD-07: future rerun replaces only drafts; launched reviews
  j.doIt('pm',change,'activate',{approval:'PM lead'});
  const periods=list(j.s,'cycle').filter(c=>c.cadenceId===change.id);
  assert.deepEqual(periods.map(c=>[c.start,c.end]),[['2028-01-01','2028-06-30'],['2028-07-01','2028-12-31']]);
+ j.act('pm','setupCheck','setupCheck.review',{year:2028,authority:'Fixture',findings:'Reviewed'});
  for(const c of periods)j.doIt('pm',c,'open');
  const campaigns=list(j.s,'review').filter(r=>periods.some(c=>c.id===r.cycleId)).map(r=>r.campaign);
  assert.equal(new Set(campaigns.map(c=>c.id)).size,2);
@@ -275,7 +283,7 @@ test('KPI import preview validates manual fields and policy totals without chang
 });
 
 test('PM configures a draft cycle, freezes custom questions and weights at launch, and exports only its cohort',async()=>{
- const j=journey(false),p=list(j.s,'policy')[0],c=j.act('pm','cycle','cycle.new',{title:'Example Q1',start:'2097-01-01',end:'2097-03-31',policyId:p.id});
+ const j=journey(false),c=readyCycle(j,2097);
  assert.throws(()=>j.doIt('manager',c,'weights',{bsc:60,feedback:40}),/role/);
  assert.throws(()=>j.doIt('pm',c,'weights',{bsc:60,feedback:50}),/100/);
  j.doIt('pm',c,'weights',{bsc:60,feedback:40});
@@ -301,4 +309,40 @@ test('manager inbox follows the self-review handoff, independently of stale remi
  assert.equal(tasks('manager')[0].due,list(j.s,'cycle').find(c=>c.id===r.cycleId).managerDue);
  assert.equal(tasks('employee').some(t=>t.action==='review.assess'),false);
  r.status='Calibration';assert.equal(tasks('manager').length,0);
+});
+
+test('cycle launch rejects wizard blockers without creating any reviews',()=>{
+ const j=journey(false),year=2090,c=j.act('pm','cycle','cycle.new',{title:'Blocked draft',start:year+'-01-01',end:year+'-03-31',policyId:list(j.s,'policy')[0].id});
+ assert.equal(view(j.s,j.user('pm'),{setupYear:year}).setup.ready,false);
+ assert.throws(()=>j.doIt('pm',c,'open'),/track assignments/i);
+ assert.equal(c.status,'Draft');assert.equal(c.membership.length,0);
+});
+test('employee inbox tracks nomination coverage and retains a concurrent self-assessment',()=>{
+ const j=journey(false),r=new360(j);goalSet(j,r);j.doIt('manager',r,'openSelf');
+ const tasks=()=>view(j.s,j.user('employee')).tasks.filter(t=>t.id===r.id).map(t=>t.action);
+ assert.ok(tasks().includes('review.nominate'));assert.ok(tasks().includes('review.self'));
+ for(const id of ['observer1','observer2','observer3'])feedback(j,r,id,'Peer');
+ assert.ok(!tasks().includes('review.nominate'));
+ list(j.s,'response').at(-1).status='Excluded';assert.ok(tasks().includes('review.nominate'));
+});
+test('Track A merit uses calibrated ledger scores by default and honours an authorised final basis',()=>{
+ const j=journey(),e=list(j.s,'employee')[0];
+ for(const r of list(j.s,'review').filter(a=>a.status==='Closed')){r.revisions.at(-1).finalScore=3;r.revisions.at(-1).calibrated=4;}
+ const values={title:'Annual',frequency:'Annual',start:'2025-01-01',authority:'Fixture authority',pool:50000,reference:6,cap:12,factor3:1,factor4:1.3,factor5:1.75,salesMap:'',cpiStart:100,cpiEnd:112,cpiSource:'Fixture'};
+ const model=j.act('finance','merit','merit.new',values);
+ const line={employeeId:e.id,salary:1000000,position:1,paySource:'Fixture',eligibility:'Verified'};
+ j.doIt('finance',model,'line',line);assert.equal(model.lines[0].index,4);
+ const other=journey();
+ for(const review of list(other.s,'review').filter(a=>a.status==='Closed')){review.revisions.at(-1).finalScore=3;review.revisions.at(-1).calibrated=4;}
+ assert.throws(()=>other.act('finance','merit','merit.new',{...values,scoreBasis:'Final'}),/signed exception/i);
+ const alternate=other.act('finance','merit','merit.new',{...values,scoreBasis:'Final',basisAuthority:'Fictional signed exception'});
+ other.doIt('finance',alternate,'line',{...line,employeeId:list(other.s,'employee')[0].id});assert.equal(alternate.lines[0].index,3);
+});
+
+test('activating a matching schedule retains the configured draft cycle',()=>{
+ const j=journey(false),policy=list(j.s,'policy')[0];
+ const c=j.act('pm','cycle','cycle.new',{title:'Custom review',start:'2090-01-01',end:'2090-03-31',policyId:policy.id});
+ const scheduled=readyCycle(j,2090);
+ assert.equal(scheduled.id,c.id);assert.equal(c.title,'Custom review');
+ j.doIt('pm',c,'open');assert.equal(c.status,'Open');
 });

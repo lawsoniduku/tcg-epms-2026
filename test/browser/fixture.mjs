@@ -22,6 +22,7 @@ const fixtures=store.change(s=>{
     const schedule=s.records.find(item=>item.id===result.id);
     act('pm','cadence','activate',{approval:'Synthetic PM lead approval'},schedule);
     const cycle=list(s,'cycle').find(c=>c.cadenceId===schedule.id);
+    act('pm','setupCheck','review',{year,authority:'Fixture',findings:'Reviewed'});
     act('pm','cycle','open',{},cycle);
     const review=list(s,'review').find(r=>r.cycleId===cycle.id&&r.employeeId===staff.id);
     review.snapshot.peopleManager=isLead;review.campaign.questions=competencyBank(isLead);

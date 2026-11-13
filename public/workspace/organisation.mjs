@@ -1,3 +1,4 @@
+import {setupChecklist} from './setup.mjs';
 import {competencyBank} from './feedback.mjs';
 import {defaultWeights,designActions,questionsFor} from './review-design.mjs';
 import {rosterAt,rosterSnapshot,recordAssignment} from './roster.mjs';
@@ -135,6 +136,8 @@ export const createCycle=action('cycle.new','Create review cycle',anyRole('pm'),
 });
 export const cycleActions=[...designActions,
   action('cycle.open','Open cycle',(ctx,r)=>r.status==='Draft'&&isRole(ctx.actor,'pm'),noFields,(ctx,r)=>{
+    const setup=setupChecklist(ctx,Number(r.start.slice(0,4)),r);
+    need(setup.ready,'Complete cycle setup: '+setup.blockers.join('; '));
     const staff=list(ctx.s,'employee').map(e=>rosterAt(e,r.start)).filter(e=>e.active&&ctx.scope(e)&&e.joinedAt<=r.start);need(staff.length,'Add eligible employees first.');
     for(const e of staff){
       const snapshot={id:e.id,staffId:e.staffId,name:e.title,managerId:e.managerId,department:e.department,company:e.company,businessUnit:e.businessUnit,team:e.team,grade:e.grade,jobTitle:e.jobTitle,peopleManager:e.peopleManager,track:trackAt(ctx.s,e,r.start)};

@@ -12,6 +12,9 @@ function periods(year,frequency) {
   }));
 }
 
+function matchesPeriod(c,period,schedule){
+  return c.start===period.start&&c.end===period.end&&c.frequency===schedule.frequency&&c.policyId===schedule.policyId&&c.behaviourMode==='Full 360';
+}
 function affected(ctx,schedule){
   return list(ctx.s,'cycle').filter(c=>c.status!=='Cancelled' && (!ctx.actor.company || !c.company || c.company===ctx.actor.company) &&
     c.start.slice(0,4)===String(schedule.year));
@@ -33,7 +36,7 @@ function createSchedule(ctx,v,plan,prior,eligible,policy){
   return create(ctx,'cadence',v.year+' · '+v.frequency,'Awaiting PM approval',{
     ...v,periods:plan,previous:prior.map(c=>({id:c.id,version:c.version})),
     preview:{formalPeriods:plan.length,estimatedEligible:eligible,estimatedCampaigns:eligible*plan.length,
-      minimumAnonymousAssignments:eligible*plan.length*(policy.minimumAnonymous||3),replacedDrafts:prior.length,
+      minimumAnonymousAssignments:eligible*plan.length*(policy.minimumAnonymous||3),replacedDrafts:prior.filter(c=>!plan.some(period=>matchesPeriod(c,period,v))).length,
       notifications:'Rater invitations follow validated assignments. Timetables follow the new periods.'}
   });
 }
@@ -42,9 +45,10 @@ export const cadenceActions=[action('cadence.activate','Activate reviewed schedu
     const prior=affected(ctx,r);
     need(prior.length===r.previous.length && prior.every(c=>c.status==='Draft'&&r.previous.some(p=>p.id===c.id&&p.version===c.version)),'Schedule changed after preview. Generate a fresh preview.');
     need(!ctx.s.liveCalendar || r.periods[0].start>isoDay(ctx.at),'The effective period has started.');
-    for(const c of prior){c.status='Cancelled';journal(ctx,c,'cycle.superseded',{cadence:r.id});}
+    for(const c of prior.filter(c=>!r.periods.some(period=>matchesPeriod(c,period,r)))){c.status='Cancelled';journal(ctx,c,'cycle.superseded',{cadence:r.id});}
     for(const period of r.periods){
-      const c=createCycle.apply(ctx,null,{...period,policyId:r.policyId,behaviourMode:'Full 360',frequency:r.frequency,cadenceId:r.id});
+      const c=prior.find(c=>matchesPeriod(c,period,r))??createCycle.apply(ctx,null,{...period,policyId:r.policyId,behaviourMode:'Full 360',frequency:r.frequency,cadenceId:r.id});
+      c.cadenceId=r.id;
       journal(ctx,c,'cycle.scheduled',{cadence:r.id});
     }
     Object.assign(r,{status:'Active',approval:v.approval,approvedBy:ctx.actor.id});return r;

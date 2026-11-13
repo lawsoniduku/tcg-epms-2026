@@ -34,7 +34,12 @@ function eligibleHistory(s,employee,r){
   const reviews=list(s,'review').filter(a=>a.employeeId===employee.id&&a.status==='Closed'&&get(s,a.cycleId).start>=r.start&&get(s,a.cycleId).end<cEnd).sort((a,b)=>get(s,a.cycleId).end.localeCompare(get(s,b.cycleId).end));
   const coveredMonths=reviews.reduce((n,a)=>n+(get(s,a.cycleId).frequency==='Biannual'?6:3),0);
   need(coveredMonths===months||reviews.length>0&&exception,'A full window of closed quarterly appraisals is required.');
-  return reviews.map(a=>({id:a.id,version:a.version,score:a.revisions.at(-1).finalScore}));
+  return reviews.map(a=>{
+    const revision=a.revisions.at(-1);
+    const score=r.scoreBasis==='Final'?revision?.finalScore:revision?.calibrated??revision?.baseScore;
+    need(Number.isFinite(score),'A closed appraisal is missing its approved score basis. Reconcile the ledger.');
+    return {id:a.id,version:a.version,score};
+  });
 }
 function fresh(s,r){
   for(const line of r.lines){
@@ -49,11 +54,12 @@ function fresh(s,r){
 }
 export const createMerit=action('merit.new','Model merit window',anyRole('finance'),ctx=>[
   field('title','Review title'),pick('frequency','Approved cadence',['H1/H2','Annual']),field('start','Window start','date'),
-  field('authority','Approved cadence and matrix reference'),num('pool','Budget pool (NGN)',0,1e12),num('reference','Reference merit rate (%)',0,100),num('cap','Maximum increase (%)',0,100),
+  pick('scoreBasis','Track A merit score basis',['Calibrated','Final'],{default:'Calibrated'}),field('basisAuthority','Signed exception approving final scores','text',{optional:true}),field('authority','Approved cadence and matrix reference'),num('pool','Budget pool (NGN)',0,1e12),num('reference','Reference merit rate (%)',0,100),num('cap','Maximum increase (%)',0,100),
   ...[3,4,5].map(n=>num('factor'+n,'Approved factor for rating '+n,0,10)),
   mappingField(ctx,'salesMap'),num('cpiStart','CPI index at window start',0.01,1e9),num('cpiEnd','CPI index at window end',0.01,1e9),
   field('cpiSource','CPI source and observation dates')
 ],(ctx,r,v)=>{
+  need(v.scoreBasis!=='Final'||v.basisAuthority,'A signed exception is required to use final scores.');
   need(v.start.endsWith('-01-01')||v.frequency==='H1/H2'&&v.start.endsWith('-07-01'),'Choose 1 January or the applicable 1 July half-year start.');
   const end=addMonths(v.start,v.frequency==='Annual'?12:6);
   need(!list(ctx.s,'merit').some(m=>m.start<end&&v.start<addMonths(m.start,m.frequency==='Annual'?12:6)),'A merit review already covers this window.');

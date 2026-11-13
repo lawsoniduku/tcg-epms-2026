@@ -1,5 +1,13 @@
 # Release audit remediation
 
+## Cycle, task and merit corrections
+
+- Opening a cycle checks the roster, policy, strategy, reviewed assignments and active schedule for the selected period. Activating a compatible schedule keeps the configured draft and its deadlines, weights and questions.
+- Employee task lists show outstanding 360 nominations alongside self-review. Manager assessment becomes actionable after self-review submission.
+- Track A merit proposals default to the calibrated ledger score. Finance must record signed authority when selecting final scores. Existing approved proposals retain their evidence.
+- KPI uploads share server preview validation across the standalone service and private workspace. The private workspace supports cycle XLSX reports and KPI workbook downloads.
+
+
 This register maps the original release audit IDs to the implementation shipped for engineering acceptance. Run npm test, npm run check and the Chromium journeys described in START-HERE.md. Collect the environment-specific evidence below before a live appraisal cycle.
 
 | Finding | Change | Engineering acceptance check |

@@ -24,12 +24,20 @@ export function sampleState({history=true}={}) {
   }
   const periods=history?[['2025 Q1','2025-01-01','2025-03-31'],['2025 Q2','2025-04-01','2025-06-30'],['2025 Q3','2025-07-01','2025-09-30'],['2025 Q4','2025-10-01','2025-12-31']]:[];
   periods.push(['2026 Q4','2026-10-01','2026-12-31']);
+  for(const year of new Set(periods.map(([,start])=>Number(start.slice(0,4))))){
+    act('pm','setupCheck','setupCheck.review',{year,authority:'Fixture roster',findings:'Reviewed'});
+    const schedule=act('pm','cadence','cadence.new',{year,frequency:'Quarterly',policyId:p.id,reason:'Fictional schedule',targetBasis:'Period targets',authority:'Fixture approval'});
+    act('pm','cadence','cadence.activate',{approval:'Fixture sign-off'},schedule);
+  }
+  for(const [,start] of periods){
+    const c=s.records.find(r=>r.type==='cycle'&&r.start===start);
+    act('pm','cycle','cycle.open',{},c);
+  }
   for(const [title,start,end] of periods){
     const after=days=>{const d=new Date(end+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);};
-    const c=act('pm','cycle','cycle.new',{title,start,end,policyId:p.id,behaviourMode:'Full 360',selfDue:end,managerDue:after(7),calibrationDue:after(14),closeDue:after(21)});
-    // Closed historical fixtures preserve the policy that governed their original review.
+    const c=s.records.find(r=>r.type==='cycle'&&r.start===start);
+    // Historical acceptance data represents the previously approved observations policy.
     if(yearBeforeTransition(start)){c.scoringVersion='legacy';c.behaviourMode='Documented observations';}
-    act('pm','cycle','cycle.open',{},c);
     const r=s.records.find(x=>x.type==='review'&&x.cycleId===c.id);
     if(title==='2026 Q4')continue;
     for(const [i,perspective] of ['Financial','Customer','Process','Learning'].entries())act('manager','review','review.goal',{title:['Cost stewardship','Customer service','Timely delivery','Learning application'][i],objective:parent,perspective,outcome:'Meet agreed target',weight:[20,20,50,10][i],baseline:80,target:100,unit:'points',direction:'Higher is better',thresholds:'',source:'Synthetic verified register',evidence:'Source reference',leadership:'No',gateCap:5,gate:''},r);

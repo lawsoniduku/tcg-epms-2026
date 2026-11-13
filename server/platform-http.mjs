@@ -1,5 +1,5 @@
 import {cycleReport} from '../public/workspace/cycle-report.mjs';
-import {previewGoals} from '../public/workspace/goal-import.mjs';
+import {previewImport} from '../public/workspace/import-preview.mjs';
 import {workbook,templateData} from './import-files.mjs';
 import {initialiseEvidence,listEvidence,uploadEvidence,downloadEvidence,scanQueue,scanReceipt} from './evidence.mjs';
 import {createServer} from 'node:http';
@@ -8,7 +8,7 @@ import {resolve,extname} from 'node:path';
 import {randomBytes,randomUUID,timingSafeEqual,verify} from 'node:crypto';
 import {digest,matches,passwordHash} from './platform-db.mjs';
 import {execute,view,exportData,processDeadlines} from '../public/workspace/engine.mjs';
-import {csv,need,requireThat,roles,isoDay} from '../public/workspace/model.mjs';
+import {need,requireThat,roles,isoDay} from '../public/workspace/model.mjs';
 
 import {rosterAt} from '../public/workspace/roster.mjs';
 const root=resolve(new URL('../public/',import.meta.url).pathname);
@@ -172,28 +172,7 @@ export function platformHttp(store,opts={}){
           requireThat(b.action==='review.importGoals','Upload a CSV for this operation.',422);text=await workbook({op:'parse',bytes:b.workbook});}
         need(typeof text==='string'&&text.length<=350000,'Import is too large.');
         const s=store.readState();
-        if(b.action==='review.importGoals'){
-          const {drafts,...preview}=previewGoals(s,actor,b.id,text);return send(200,{...preview,csv:text});
-        }
-        if(b.action==='employee.import'){
-          requireThat(['pm','admin'].includes(actor.role),'Roster import unavailable.',403);
-          const entries=csv(text);need(entries.length<=2000,'Import up to 2,000 employees at a time.');
-          const copy=structuredClone(s),seen=new Set(),rows=[];
-          for(const [index,line] of entries.entries()){
-            try{
-              need(!seen.has(line.staffId),'Duplicate staff ID in import.');seen.add(line.staffId);
-              const quote=v=>'"'+String(v).replaceAll('"','""')+'"';
-              const csv=[Object.keys(line),Object.values(line)].map(r=>r.map(quote).join(',')).join('\n');
-              execute(copy,actor,{type:'employee',action:'employee.import',values:{csv}});
-              rows.push({row:index+2,employee:line.staffId,valid:true});
-            }catch(error){rows.push({row:index+2,employee:line.staffId,valid:false,error:error.message});}
-          }
-          return send(200,{rows,groups:[],valid:rows.every(row=>row.valid),csv:text});
-        }
-        const copy=structuredClone(s),result=execute(copy,actor,{...b,values:{...b.values,csv:text}});
-        const record=copy.records.find(r=>r.id===result.id);
-        const rows=record.rows?.map((row,i)=>({row:i+2,employee:row.employee??row.staffId,title:row.rawStatus,valid:row.valid??!row.errors?.length,error:row.error??row.errors?.join(', ')}))??Array.from({length:record.count},(_,i)=>({row:i+2,valid:true}));
-        return send(200,{rows,groups:[],valid:true,csv:text});
+        return send(200,previewImport(s,actor,b,text));
       }
       if(path==='/api/platform/files'){
         if(post)return send(201,uploadEvidence(store,actor,await authorisedBody(2900000)));

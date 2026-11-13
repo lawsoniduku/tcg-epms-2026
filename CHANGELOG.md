@@ -1,5 +1,13 @@
 # Standalone engineering candidate · 13 November 2026
 
+## Cycle, task and merit corrections
+
+- Opening a cycle checks the roster, policy, strategy, reviewed assignments and active schedule for the selected period. Activating a compatible schedule keeps the configured draft and its deadlines, weights and questions.
+- Employee task lists show outstanding 360 nominations alongside self-review. Manager assessment becomes actionable after self-review submission.
+- Track A merit proposals default to the calibrated ledger score. Finance must record signed authority when selecting final scores. Existing approved proposals retain their evidence.
+- KPI uploads share server preview validation across the standalone service and private workspace. The private workspace supports cycle XLSX reports and KPI workbook downloads.
+
+
 | Requested change | Implementation and verification |
 |---|---|
 | 1.1 | Base-ten integer arithmetic for confirmation, commercial scoring, attainment, competency means and merit percentages. See the decimal fixtures and DEC-04 decision in the [phase register](docs/pms/phase-upgrade.md). |

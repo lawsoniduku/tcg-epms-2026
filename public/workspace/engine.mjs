@@ -1,4 +1,4 @@
-import {nextTask,confirmationStep} from './work-queue.mjs';
+import {nextTask,confirmationStep,nominationTask} from './work-queue.mjs';
 import {questionsFor,defaultWeights} from './review-design.mjs';
 import {importGoals} from './goal-import.mjs';
 import {setupChecklist,reviewTracks} from './setup.mjs';
@@ -125,8 +125,10 @@ export function view(s,actor,selection={}) {
     const visible=permittedRecords(ctx,type);
     rows[type]=visible.map(r=>({id:r.id,title:r.title,status:r.status,version:r.version,employee:personName(s,r),...(r.type==='talent'?{potential:r.potential,performance:r.performance}:{}),department:r.snapshot?.department??r.department??'',cycle:r.cycleId?s.records.find(x=>x.id===r.cycleId)?.title:'',manager:r.snapshot?.managerId??r.managerId??'',updatedAt:r.updatedAt??r.createdAt,actionCount:defs.actions.filter(d=>allowed(ctx,r,d)).length}));
     visible.forEach((r,i)=>{
-      const task=nextTask(ctx,r,defs.actions.filter(d=>allowed(ctx,r,d)),s.byId.get(r.cycleId));
-      if(task)tasks.push({...rows[type][i],type,...task});
+      const actions=defs.actions.filter(d=>allowed(ctx,r,d)),cycle=s.byId.get(r.cycleId);
+      for(const task of [nextTask(ctx,r,actions,cycle),nominationTask(ctx,r,actions,cycle)]){
+        if(task)tasks.push({...rows[type][i],type,...task});
+      }
       if(type==='probation')rows[type][i].step=confirmationStep(r);
     });
     available[type]=allowedCreates;

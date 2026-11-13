@@ -1,5 +1,5 @@
 // @ts-check
-import {addWorkdays} from './model.mjs';
+import {addWorkdays,isoDay,list} from './model.mjs';
 const reviewStages={
  'Goal setting':['submitGoals','goalDue'],'Manager goal approval':['managerApprove','goalDue'],'PM quality review':['qa','qaDue'],'HOD baseline approval':['baseline','baselineDue'],
  'Self-review':['self','selfDue'],'Manager assessment':['assess','managerDue'],'Calibration':['calibrate','calibrationDue'],'Enterprise moderation':['moderate','calibrationDue'],
@@ -34,4 +34,17 @@ export function nextTask(ctx,r,actions,cycle){
   if(r.type==='response')due=r.feedbackDeadline??cycle?.feedbackDue;
  }
  return action?{action:action.id,label:action.label,due:due??null,reason}:null;
+}
+
+/** @param {any} ctx @param {any} r @param {any[]} actions @param {any} cycle */
+export function nominationTask(ctx,r,actions,cycle){
+ const action=actions.find(a=>a.id===r.type+'.nominate');
+ if(!action)return null;
+ const config=r.feedbackConfig??cycle;
+ const due=config.feedbackDue??config.managerDue,today=isoDay(ctx.at);
+ if(ctx.s.liveCalendar&&(today<config.start||today>due))return null;
+ const active=list(ctx.s,'response').filter(a=>a.reviewId===r.id&&!['Expired','Excluded','Declined'].includes(a.status));
+ const covered=new Set(active.filter(a=>a.category!=='Manager').map(a=>a.rater)).size;
+ if(covered>=(config.policy.minimumAnonymous||3)||config.policy.nominationCap&&active.length>=config.policy.nominationCap)return null;
+ return {action:action.id,label:action.label,due,reason:'Nominate observers for this review'};
 }

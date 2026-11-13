@@ -34,3 +34,5 @@ HR and Performance should reconcile a quarterly appraisal and a sales or confirm
 ## Manage an appraisal cycle
 
 Open Review management as Performance Management. Select Create or manage review cycles → Create review cycle, or Plan annual schedule for scheduled quarters or half-years. Open the draft cycle. Configure appraisal weights, review the default questions and add, edit or remove questions for the relevant audience before opening the cycle. The 360 score averages each eligible validated observer's mean equally. Download the cycle workbook directly from the cycle or select a period under Review management → Appraisal report.
+
+Before opening a period, complete the year’s roster and track sign-off and activate its formal schedule. Finance should verify the score basis and reconcile one merit proposal against its closed review revisions.
