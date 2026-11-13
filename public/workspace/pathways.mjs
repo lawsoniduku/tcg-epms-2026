@@ -1,3 +1,4 @@
+import {weighted,percent} from './decimal.mjs';
 import {probationNomination,behaviourResult} from './quarterly.mjs';
 import {competencyBank} from './feedback.mjs';
 import {trackAt} from './governance.mjs';
@@ -30,10 +31,10 @@ export const commercialActions=[
   ],(ctx,r,v)=>{r.inputs={...v,by:ctx.actor.id};r.status='Source validation';return r;}),
   action('commercial.return','Return source for correction',stage('Source validation',anyRole('finance')),()=>[note('reason','Validation issue')],(ctx,r,v)=>{r.correction=v.reason;r.status='Active';return r;}),
   action('commercial.validate','Validate commercial inputs',stage('Source validation',anyRole('finance')),()=>[field('reference','Finance validation reference')],(ctx,r,v)=>{
-    const attainment=round(100*r.inputs.actual/r.target);
+    const attainment=percent(r.inputs.actual,r.target);
     const output=attainment>=120?5:attainment>=105?4:attainment>=90?3:attainment>=70?2:1;
     need(ctx.actor.id!==r.inputs.by,'Source validation requires a different person from the data submitter.');
-    const raw=round(((r.outputWeight??70)*output+(r.qualityWeight??20)*r.inputs.quality+(r.executionWeight??10)*r.inputs.execution)/100);
+    const raw=weighted([output,r.inputs.quality,r.inputs.execution],[r.outputWeight??70,r.qualityWeight??20,r.executionWeight??10]);
     r.result={attainment,raw,score:r.inputs.breach==='Yes'?Math.min(raw,r.criticalCap):raw,output,validation:v.reference,verifiedBy:ctx.actor.id};
     r.status='Manager review';return r;
   }),
@@ -70,7 +71,7 @@ export const probationActions=[probationNomination,
     note('grounds','Evidence and support history'),note('employeeResponse','Employee representation'),field('evidence','Evidence reference')
   ],(ctx,r,v)=>{
     if(r.feedbackConfig)r.feedbackReport=behaviourResult(ctx,r);
-    const w=r.snapshot.commercial?[70,15,15]:[60,20,20];const score=round((v.delivery*w[0]+v.capability*w[1]+v.behaviour*w[2])/100);
+    const w=r.snapshot.commercial?[70,15,15]:[60,20,20];const score=weighted([v.delivery,v.capability,v.behaviour],w);
     if(v.recommendation==='Extend')need(r.extensions===0,'Only one ordinary extension is permitted.');
     r.assessment={...v,score,weights:w,guide:v.critical==='Yes'?'HR/ER review':score>=3?'Consider confirmation':score>=2.5?'Consider justified extension':'HR/ER review',by:ctx.actor.id};r.status='HR and ER review';return r;
   }),

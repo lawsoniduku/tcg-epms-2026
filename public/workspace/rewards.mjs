@@ -1,3 +1,4 @@
+import {percent,adjustedGrowth} from './decimal.mjs';
 import {mappingField,mappedRating} from './commercial-mapping.mjs';
 import {trackAt} from './governance.mjs';
 import {action,addMonths,anyRole,average,choices,create,csv,field,get,isRole,journal,list,need,noFields,note,num,pick,ratingFor,round,yes} from './model.mjs';
@@ -56,7 +57,7 @@ export const createMerit=action('merit.new','Model merit window',anyRole('financ
   need(v.start.endsWith('-01-01')||v.frequency==='H1/H2'&&v.start.endsWith('-07-01'),'Choose 1 January or the applicable 1 July half-year start.');
   const end=addMonths(v.start,v.frequency==='Annual'?12:6);
   need(!list(ctx.s,'merit').some(m=>m.start<end&&v.start<addMonths(m.start,m.frequency==='Annual'?12:6)),'A merit review already covers this window.');
-  return create(ctx,'merit',v.title,'Modelling',{...v,poolKobo:hundredths(v.pool),inflation:round((v.cpiEnd/v.cpiStart-1)*100),lines:[]});
+  return create(ctx,'merit',v.title,'Modelling',{...v,poolKobo:hundredths(v.pool),inflation:adjustedGrowth(0,v.cpiEnd,v.cpiStart),lines:[]});
 });
 export const meritActions=[
   action('merit.remodel','Return proposal to modelling',(ctx,r)=>ctx.actor.role==='finance'&&['HR equity review','Executive approval','Export ready'].includes(r.status),()=>[note('reason','Changed data or budget reason')],(ctx,r,v)=>{r.priorApprovalRounds??=[];r.priorApprovalRounds.push({reason:v.reason,at:ctx.at,costKobo:r.costKobo,authorisation:r.authorisation??null});r.authorisation=null;r.equity=null;r.status='Modelling';return r;}),
@@ -78,7 +79,7 @@ export const meritActions=[
     const total=r.lines.reduce((sum,l)=>sum+l.proposedKobo,0);need(Number.isSafeInteger(total),'Budget model exceeds the accounting range.');
     need(total<=r.poolKobo||v.normalise==='Yes','Finance must authorise scaling or increase the approved pool.');
     for(const l of r.lines){l.awardKobo=total>r.poolKobo?Number(BigInt(l.proposedKobo)*BigInt(r.poolKobo)/BigInt(total)):l.proposedKobo;
-      l.nominal=round(l.awardKobo/l.salaryKobo*100);l.real=round(((1+l.nominal/100)/(r.cpiEnd/r.cpiStart)-1)*100);}
+      l.nominal=percent(l.awardKobo,l.salaryKobo);l.real=adjustedGrowth(l.nominal,r.cpiStart,r.cpiEnd);}
     r.costKobo=r.lines.reduce((sum,l)=>sum+l.awardKobo,0);r.financeReview={...v,by:ctx.actor.id};r.status='HR equity review';return r;
   }),
   action('merit.equity','Complete HR equity review',byRole('HR equity review','pm'),()=>[note('findings','Equity, eligibility and exceptions'),pick('decision','Disposition',['Approve for executive review','Return to Finance'])],(ctx,r,v)=>{need(ctx.actor.id!==r.financeReview.by,'Independent HR equity review is required.');r.equity={...v,by:ctx.actor.id};r.status=v.decision==='Return to Finance'?'Modelling':'Executive approval';return r;}),

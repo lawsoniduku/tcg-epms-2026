@@ -14,6 +14,7 @@
     "check": "node scripts/check.mjs",
     "build": "node scripts/build.mjs",
     "provision": "node server/platform.mjs --provision",
+    "rekey": "node server/platform.mjs --rekey",
     "backup": "node server/platform.mjs --backup",
     "prepare:hosting": "node scripts/prepare-host.mjs"
   }

@@ -257,3 +257,19 @@ test('reopened cohort retains supervisor basis and requires fresh feedback clear
  assert.ok(csv.includes(c.title));assert.equal(csv.includes('2025 Q4'),false);
  assert.throws(()=>exportData(j.s,j.user('pm'),'typo'),/Unknown report/);
 });
+
+test('KPI import preview validates manual fields and policy totals without changing the draft',async()=>{
+ const {sampleState}=await import('../public/workspace/sample.mjs');
+ const {previewGoals,goalHeaders}=await import('../public/workspace/goal-import.mjs');
+ const s=sampleState(),draft=s.records.find(r=>r.type==='review'&&r.status==='Goal setting');
+ const manager=s.users.find(u=>u.id===draft.snapshot.managerId);
+ const goals=s.records.find(r=>r.type==='review'&&r.baseline?.goals.length).baseline.goals;
+ const csv=[goalHeaders,...goals.map(g=>goalHeaders.map(k=>g[k]??''))].map(row=>row.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(',')).join('\n');
+ draft.goals=[];
+ const preview=previewGoals(s,manager,draft.id,csv);
+ assert.equal(preview.valid,true);assert.equal(draft.goals.length,0);
+ assert.equal(previewGoals(s,manager,draft.id,csv.replace(goals[0].objective,'missing')).valid,false);
+ const command={type:'review',id:draft.id,version:draft.version,action:'review.importGoals',values:{csv,versions:JSON.stringify(preview.versions)}};
+ execute(s,manager,command);assert.equal(draft.status,'Goal setting');assert.equal(draft.goals.length,goals.length);
+ assert.equal(s.records.filter(r=>r.type==='goalBatch').length,1);
+});

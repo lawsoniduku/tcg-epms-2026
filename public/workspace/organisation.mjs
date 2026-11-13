@@ -27,6 +27,9 @@ function upsert(ctx,values) {
   need(effective>=values.joinedAt,'Roster change precedes hire date.');
   if(e.staffId&&!e.assignments)recordAssignment(e,rosterSnapshot(e),e.joinedAt,today);
   const basis=e.staffId?rosterAt(e,effective):{};
+  if(ctx.actor.id==='integration-hris'&&e.staffId&&basis.managerId!==values.managerId){
+    need(!ctx.s.users.some(u=>u.employeeId===e.id&&[u.role,...u.additionalRoles??[]].some(role=>!['employee','manager'].includes(role))),'Privileged account manager changes require account administration review.');
+  }
   for(const key of ['businessUnit','team','grade'])values[key] ||= basis[key] || '';
   const next={...values,title:values.name,active:values.employmentStatus ? values.employmentStatus==='Active' : basis.active!==false,confirmed:values.confirmed==='Yes',commercial:values.commercial==='Yes',peopleManager:values.peopleManager==='Yes'};
   if(!e.staffId)Object.assign(e,next);

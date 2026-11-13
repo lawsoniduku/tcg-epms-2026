@@ -23,3 +23,22 @@ jobs:
             python -m playwright install --with-deps chromium
           fi
           python test/browser/feedback.py
+      - name: Screenshot and responsive acceptance
+        run: |
+          export CHROMIUM="$(command -v google-chrome)"
+          python test/browser/visual.py
+      - name: Check out the previous release for before screenshots
+        uses: actions/checkout@v4
+        with:
+          ref: e022fdfbef22996315b7d85ef8cd8fb9a57f8839
+          path: previous-release
+      - name: Capture previous-release screens
+        working-directory: previous-release
+        run: |
+          export CHROMIUM="$(command -v google-chrome)"
+          export SCREENSHOTS="$GITHUB_WORKSPACE/artifacts/screenshots"
+          python ../test/browser/before.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pms-visual-evidence
+          path: artifacts/screenshots/

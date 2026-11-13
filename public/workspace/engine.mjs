@@ -1,3 +1,5 @@
+import {importGoals} from './goal-import.mjs';
+import {setupChecklist,reviewTracks} from './setup.mjs';
 import {newCadence,cadenceActions} from './cadence.mjs';
 import {operationsRows,outcomeTrends} from './reporting.mjs';
 import {createMapping,mappingActions} from './commercial-mapping.mjs';
@@ -16,6 +18,7 @@ const newRecognition=action('recognition.new','Nominate for recognition',ctx=>is
   field('title','Recognition'),note('impact','Evidence of contribution'),field('owner','Recognition owner')
 ],(ctx,r,v)=>{const a=get(ctx.s,v.reviewId);return create(ctx,'recognition',v.title,'Approval',{...v,employeeId:a.employeeId,cycleId:a.cycleId});});
 export const catalogue={
+  setupCheck:{new:[reviewTracks],actions:[]},
   cadence:{new:[newCadence],actions:cadenceActions},
   template:{
     new:[action('template.new','Save KPI template',ctx=>isRole(ctx.actor,'pm','hod'),ctx=>[
@@ -31,7 +34,7 @@ export const catalogue={
   mapping:{new:[createMapping],actions:mappingActions},
   employee:{new:[createEmployee,importRoster],actions:employeeActions},policy:{new:[createPolicy],actions:policyActions},
   strategy:{new:[createStrategy],actions:strategyActions},cycle:{new:[createCycle],actions:cycleActions},
-  review:{actions:[...reviewActions,...amendments,panel]},response:{actions:[...responseActions,...responseExtra]},commercial:{new:[createCommercial,importCommercial],actions:[...commercialActions,...commercialCorrections]},sourceBatch:{actions:sourceBatchActions},
+  goalBatch:{actions:[]},review:{actions:[importGoals,...reviewActions,...amendments,panel]},response:{actions:[...responseActions,...responseExtra]},commercial:{new:[createCommercial,importCommercial],actions:[...commercialActions,...commercialCorrections]},sourceBatch:{actions:sourceBatchActions},
   probation:{new:[createProbation],actions:probationActions},appeal:{new:[createAppeal],actions:appealActions},
   capability:{new:[createCapability],actions:[...capabilityActions,caseResponse]},talent:{new:[createTalent],actions:talentActions},
   exception:{new:[createException],actions:exceptionActions},merit:{new:[createMerit],actions:meritActions},
@@ -40,7 +43,7 @@ export const catalogue={
     action('recognition.authorise','Decide recognition',(ctx,r)=>ctx.actor.role==='executive'&&r.status==='Approval'&&!own(ctx.actor,r),()=>[pick('decision','Decision',['Approve','Decline']),note('reason','Decision and budget authority')],(ctx,r,v)=>Object.assign(r,{decision:v,status:v.decision==='Approve'?'Approved':'Declined'}))
   ]}
 };
-Object.assign(sections,{cadence:'Formal review schedules',template:'KPI templates',mapping:'Commercial rating conversions',recognition:'Recognition',track:'Track assignments',migration:'Migration reconciliation',scenario:'Salary scenarios',sourceBatch:'Commercial imports',cutover:'Rollout approval',payBasis:'Payroll snapshots',meritException:'Merit exceptions'});
+Object.assign(sections,{setupCheck:'Roster and track sign-off',cadence:'Formal review schedules',template:'KPI templates',mapping:'Commercial rating conversions',recognition:'Recognition',track:'Track assignments',migration:'Migration reconciliation',scenario:'Salary scenarios',sourceBatch:'Commercial imports',cutover:'Rollout approval',payBasis:'Payroll snapshots',meritException:'Merit exceptions'});
 export function context(s,actor,at=new Date().toISOString()) {
   requireThat(signed(actor),'Sign in with an active account.',401);
   return {s,actor,at,scope:r=>scope(s,actor,r)};
@@ -126,6 +129,18 @@ export function view(s,actor,selection={}) {
     const r=s.records.find(r=>r.id===selection.id);
     requireThat(r&&ctx.scope(r),'Record unavailable in your scope.',404);
     detail={canAttach:canAttach(s,actor,r),id:r.id,type:r.type,title:r.title,status:r.status,version:r.version,data:displayRecord(ctx,r),actions:catalogue[r.type].actions.filter(d=>allowed(ctx,r,d)).map(d=>form(ctx,r,d))};
+    if(r.type==='review'){
+      const ids=new Set([...(detail.data.calibrations??[]),...(detail.data.revisions??[])].map(entry=>entry.by));
+      detail.people=Object.fromEntries(s.users.filter(u=>ids.has(u.id)).map(u=>[u.id,[...new Set([u.name,roles[u.role]])].join(' · ')]));
+    }
+    if(r.type==='review'&&detail.actions.some(a=>a.id==='review.goal')){
+      const fields=detail.actions.find(a=>a.id==='review.goal').fields;
+      const extract=g=>Object.fromEntries(fields.map(f=>[f.key,g[f.key]??f.default??'']));
+      const templates=permittedRecords(ctx,'template').filter(t=>t.status==='Approved'&&t.department===r.snapshot.department&&(!t.jobTitle||t.jobTitle===r.snapshot.jobTitle));
+      const previous=permittedRecords(ctx,'review').filter(a=>a.employeeId===r.employeeId&&a.baseline&&get(s,a.cycleId).end<get(s,r.cycleId).start).sort((a,b)=>get(s,b.cycleId).end.localeCompare(get(s,a.cycleId).end))[0];
+      detail.kpiSources=[...templates.map(t=>({label:t.title,goals:t.goals.map(extract)})),...(previous?[{label:'Copy last cycle’s KPIs',goals:previous.baseline.goals.map(extract)}]:[])];
+      detail.teamDrafts=actor.role==='manager'?permittedRecords(ctx,'review').filter(a=>a.cycleId===r.cycleId&&a.status==='Goal setting'&&(a.actingReviewer??a.snapshot.managerId)===actor.id).map(a=>({staffId:a.snapshot.staffId,name:a.snapshot.name??a.snapshot.staffId})):[];
+    }
     detail.related=r.type==='employee'?Object.entries(rows).flatMap(([kind,entries])=>entries.filter(entry=>s.byId.get(entry.id)?.employeeId===r.id).map(entry=>({...entry,type:kind}))):[];
     detail.history=s.events.filter(e=>e.record===r.id&&r.type!=='response'&&(!own(actor,r)||r.type!=='review'||!['review.calibrate','review.moderate','review.lock','review.assess'].includes(e.action))).slice(-40).reverse().map(e=>({action:e.action,at:e.at,actor:e.actorName,from:e.from,to:e.to}));
   }
@@ -142,7 +157,7 @@ export function view(s,actor,selection={}) {
     if(r.development)aggregates.development++;
     if(!['Closed','Approved exception'].includes(r.status))aggregates.outstanding[r.status]=(aggregates.outstanding[r.status]??0)+1;
   }
-  return {trends:isRole(actor,'pm','hod','finance','executive','er','auditor')?outcomeTrends(ctx):[],operations:isRole(actor,'pm','hod','manager','executive','auditor')?operationsRows(ctx):[],aggregates,actor:{id:actor.id,name:actor.name,role:actor.role,grantedRoles:actor.grantedRoles??[actor.role],department:actor.department},roles,sections:labels,rows,available,detail,audit,notices,revision:s.revision};
+  return {setup:isRole(actor,'pm','admin')?setupChecklist(ctx,Number.isInteger(selection.setupYear)&&selection.setupYear>=2000&&selection.setupYear<=2200?selection.setupYear:new Date(ctx.at).getUTCFullYear()):undefined,trends:isRole(actor,'pm','hod','finance','executive','er','auditor')?outcomeTrends(ctx):[],operations:isRole(actor,'pm','hod','manager','executive','auditor')?operationsRows(ctx):[],aggregates,actor:{id:actor.id,name:actor.name,role:actor.role,grantedRoles:actor.grantedRoles??[actor.role],department:actor.department},roles,sections:labels,rows,available,detail,audit,notices,revision:s.revision};
 }
 function personName(s,r){return r.type==='employee'?r.title:(s.byId?s.byId.get(r.employeeId):s.records.find(e=>e.id===r.employeeId))?.title??'';}
 import {trackAt} from './governance.mjs';

@@ -1,10 +1,10 @@
 const app=document.querySelector('#app'),dialog=document.querySelector('#dialog'),toast=document.querySelector('#toast');
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const extra={home:'Home',inbox:'My tasks',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
+const extra={setup:'Set up a review cycle',home:'Home',inbox:'My tasks',reports:'Reports',audit:'Audit trail',accounts:'User accounts'};
 const reviewPages=['review','response','commercial','probation'];
 const outcomePages=['appeal','capability','recognition','talent','exception'];
 const rewardPages=['merit','payBasis','meritException','scenario'];
-const setupPages=['cycle','cadence','strategy','template','track','policy','mapping','batch','migration','cutover','accounts'];
+const setupPages=['setup','setupCheck','cycle','cadence','strategy','template','track','policy','mapping','batch','migration','cutover','accounts'];
 const icons={
  home:'M3 10l9-7 9 7v11h-6v-7H9v7H3z', inbox:'M3 5h18v14H3z M3 12h5l2 3h4l2-3h5',
  reviews:'M5 4h14v17H5z M8 9h8 M8 13h8 M8 17h5', team:'M3 21v-2a6 6 0 0 1 12 0v2 M9 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M16 6a3 3 0 0 1 0 6 M18 15a5 5 0 0 1 3 5',
@@ -39,6 +39,7 @@ function navIcon(key){return '<svg aria-hidden="true" viewBox="0 0 24 24" class=
 const friendly={employeeId:'Employee',cycleId:'Cycle',policyId:'Policy version',reviewId:'Appraisal',source:'Source',qa:'Quality review',cpiStart:'Starting CPI index',cpiEnd:'Closing CPI index',poolKobo:'Budget (kobo)',proposedKobo:'Proposed annual increase (kobo)',awardKobo:'Approved annual increase (kobo)',supervisorScore:'Submitted supervisor score',calibratedScore:'Approved calibration score',by:'Recorded by',at:'Recorded at',reference:'Reference',kind:'Type',id:'Reference',status:'Status'};
 const label=k=>friendly[k]??(k.replace(/([a-z])([A-Z])/g,'$1 $2').replaceAll('_',' ').replace(/^./,c=>c.toUpperCase()));
 let info,state,csrf,section='home',selected='',query='',filter='All',department='All',cycle='All',manager='All',currentForm=null,working=false,menuOpen=false;
+let setupYear=new Date().getFullYear(),returnToSetup=false;
 let accounts=null,files=[];
 const navLabel=k=>({review:'Performance reviews',response:'360 feedback',employee:({employee:'My profile',manager:'Direct reports',hod:'Function directory'})[state?.actor.role]??'Employee directory'})[k]??state?.sections[k]??extra[k]??label(k);
 const fmtDate=value=>new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short',timeZone:'Africa/Lagos'}).format(new Date(value));
@@ -49,6 +50,7 @@ async function api(path,values){
 }
 function button(title,attributes,secondary=false){return '<button class="button '+(secondary?'secondary':'')+'" '+attributes+'>'+escape(title)+'</button>';}
 function permitted(k){
+ if(k==='setup')return !!state.setup;
  if(['home','inbox'].includes(k))return true;
  if(k==='reports')return ['manager','hod','executive','finance','pm','auditor','er','talent'].includes(state.actor.role);
  if(['employee','manager','hod','pm'].includes(state.actor.role)&&['review','response','employee'].includes(k))return true;
@@ -79,7 +81,7 @@ let requestVersion=0,listPage=0;
 async function reload(){
  const version=++requestVersion;
  let view;
- try{view=await api('view'+(selected?'?id='+encodeURIComponent(selected):''));}
+ try{view=await api('view?year='+setupYear+(selected?'&id='+encodeURIComponent(selected):''));}
  catch(e){if(version!==requestVersion)return;if(selected&&[403,404].includes(e.status)){selected='';history.replaceState(null,'','#'+section);return reload();}throw e;}
  if(version!==requestVersion)return;
  state=view;csrf=view.csrf??csrf;
@@ -109,24 +111,32 @@ function go(type,id=''){
 }
 function login(){++requestVersion;if(dialog.open)dialog.close();currentForm=null;csrf=null;accounts=null;files=[];menuOpen=false;
  for(const k of Object.keys(reportFilters))reportFilters[k]='';
- state=null;selected='';section='home';
+ state=null;selected='';section='home';returnToSetup=false;
  app.innerHTML='<div class="login-page"><section class="login-intro">'+logo()+'<div><div class="login-line"></div><h1>Performance<br>Management</h1><p>The Concept Group · People & Culture</p></div><footer>Employee, manager and HR workspace</footer></section><main class="login-form" id="main"><div class="login-inner"><h2>'+ (info.mode==='live'?'Sign in':'Open your workspace')+'</h2><p>'+(info.mode==='live'?'Use your organisation account.':'Choose a role to work through the appraisal cycle using fictional records.')+'</p><form id="signin">'+(info.mode==='live'?'<div class="field"><label for="email">Work email</label><input id="email" name="email" type="email" autocomplete="username" required></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required></div>':'<div class="field"><label for="user">Acceptance role</label><select id="user" name="userId">'+info.users.map(u=>'<option value="'+escape(u.id)+'" '+(u.role==='pm'?'selected':'')+'>'+escape(u.name)+'</option>').join('')+'</select></div>')+'<p class="form-error" role="alert"></p><button class="button" type="submit">Open workspace</button></form>'+(info.ssoUrl?'<a class="button secondary" href="'+escape(info.ssoUrl)+'">Company sign-in</a>':'')+'</div></main></div>';
+ if(info.mode==='live'&&info.localLogin===false)app.querySelector('#signin').remove();
+}
+function passwordChange(){
+ app.innerHTML='<main id="main" class="login-form"><form id="change-password"><h1>Change your temporary password</h1><label>Temporary password<input name="current" type="password" autocomplete="current-password" required></label><label>New password (at least 12 characters)<input name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></label><p role="alert" class="form-error"></p><button type="submit" class="button">Save password</button></form></main>';
+ app.querySelector('input').focus();
 }
 function heading(title,desc,actions=''){return '<div class="page-head"><div><h1>'+escape(title)+'</h1>'+(desc?'<p>'+escape(desc)+'</p>':'')+'</div><div class="actions">'+actions+'</div></div>';}
 const actionsFor=(type,r)=>r?state.detail.actions:state.available[type]??[];
 const commands=(type,r)=>actionsFor(type,r).map((a,i)=>button(a.label,'data-command="'+escape(a.id)+'"',i>0)).join('');
 function grid(items){return '<div class="metric-grid">'+items.map(([name,n])=>'<article class="metric"><div class="metric-top">'+escape(name)+'</div><div class="metric-number">'+escape(n)+'</div></article>').join('')+'</div>';}
 function rowTable(rows,type){
- if(!rows.length)return '<div class="empty">No matching records.</div>';
- return '<div class="table-scroll"><table><thead><tr><th>Record</th><th>Stage</th><th>Department</th><th>Updated</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+escape(r.title)+'</strong>'+(r.cycle?'<small class="subline">'+escape(r.cycle)+'</small>':'')+'</td><td>'+tag(r.status)+'</td><td>'+escape(r.department||'—')+'</td><td>'+escape(fmtDate(r.updatedAt))+'</td><td>'+button('Open','aria-label="Open '+escape(r.title)+'" data-record="'+escape(r.id)+'" data-type="'+escape(type??r.type)+'"',true)+'</td></tr>').join('')+'</tbody></table></div>';
+ if(!rows.length){
+  const create=state.available[type]?.[0];
+  return '<div class="empty">'+(query||[filter,department,cycle,manager].some(x=>x!=='All')?'No records match these filters. Clear the search or select All.':create?'No '+escape(navLabel(type).toLowerCase())+' have been recorded. Use '+escape(create.label)+' to begin.':section==='inbox'?'You have no actions due. Check your cycle schedule for the next milestone.':'There are no records visible to your role here. Check My tasks or contact the cycle owner.')+'</div>';
+ }
+ return '<div class="table-scroll record-list"><table><thead><tr><th>Record</th><th>Stage</th><th>Department</th><th>Updated</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+escape(r.title)+'</strong>'+(r.cycle?'<small class="subline">'+escape(r.cycle)+'</small>':'')+'</td><td>'+tag(r.status)+'</td><td>'+escape(r.department||'—')+'</td><td>'+escape(fmtDate(r.updatedAt))+'</td><td>'+button('Open','aria-label="Open '+escape(r.title)+'" data-record="'+escape(r.id)+'" data-type="'+escape(type??r.type)+'"',true)+'</td></tr>').join('')+'</tbody></table></div>';
 }
 const assignedTasks=()=>flat().filter(r=>r.actionCount&&!['Closed','Published','Approved','Applied','Reconciled','Exported','Acknowledged','Approved exception'].includes(r.status));
 const flat=()=>Object.entries(state.rows).flatMap(([type,rs])=>rs.map(r=>({...r,type})));
 function home(){
  const reviews=state.rows.review??[],open=reviews.filter(r=>!['Closed','Approved exception'].includes(r.status)),todo=assignedTasks().sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
- return heading(({employee:'My performance',manager:'Team overview',hod:'Function overview',finance:'Compensation overview',auditor:'Audit overview',er:'Employee relations overview',talent:'Talent overview'})[state.actor.role]??'Performance overview',state.actor.name+' · '+state.roles[state.actor.role])+grid([['Performance reviews',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+rowTable(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Formal appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
+ return heading(({employee:'My performance',manager:'Team overview',hod:'Function overview',finance:'Compensation overview',auditor:'Audit overview',er:'Employee relations overview',talent:'Talent overview'})[state.actor.role]??'Performance overview',[...new Set([state.actor.name,state.roles[state.actor.role]])].join(' · '))+grid([['Performance reviews',reviews.length],['In progress',open.length],['Closed',reviews.filter(r=>r.status==='Closed').length],['Approved exceptions',reviews.filter(r=>r.status==='Approved exception').length]])+'<div class="two-col"><section class="panel"><div class="panel-head"><h2>Work awaiting action</h2><button class="text-btn" data-nav="inbox">View my work →</button></div>'+rowTable(todo.slice(0,7))+'</section><aside class="panel"><div class="panel-head"><h2>Employee pathways</h2></div><div class="panel-body">'+[['review','Formal appraisal'],['commercial','Monthly commercial review'],['probation','Six-month confirmation']].map(([k,t])=>'<div class="track-row"><div class="track-top"><span class="track-title">'+t+'</span><strong>'+state.rows[k].length+'</strong></div></div>').join('')+'</div></aside></div>';
 }
-function filterSelect(id,title,values,selected){return '<select aria-label="'+escape(title)+'" id="'+id+'"><option value="All">'+escape(title)+'</option>'+[...new Set(values.filter(Boolean))].sort().map(x=>'<option '+(selected===x?'selected':'')+'>'+escape(x)+'</option>').join('')+'</select>';}
+function filterSelect(id,title,values,selected){return '<label class="filter-label">'+escape(title.replace(/^All /,''))+'<select aria-label="'+escape(title)+'" id="'+id+'"><option value="All">'+escape(title)+'</option>'+[...new Set(values.filter(Boolean))].sort().map(x=>'<option '+(selected===x?'selected':'')+'>'+escape(x)+'</option>').join('')+'</select></label>';}
 function filtered(){let rs=section==='inbox'?assignedTasks():state.rows[section]??[];return rs.filter(r=>(filter==='All'||r.status===filter)&&(department==='All'||r.department===department)&&(cycle==='All'||r.cycle===cycle)&&(manager==='All'||r.manager===manager)&&(r.title+' '+r.employee+' '+r.department).toLowerCase().includes(query.toLowerCase()));}
 function talentGrid(){
  const levels=['Developing','Effective','High'],potential=['High','Established','Developing'];
@@ -143,13 +153,31 @@ function listing(){const rows=section==='inbox'?assignedTasks():state.rows[secti
 function scorePanel(r){
  if(r.type!=='review')return '';
  const d=r.data, final=d.finalScore??d.revisions?.at(-1)?.finalScore;
- const data=state.actor.role==='employee'?[['Released score',final]]:[['Supervisor',d.supervisorScore],['Calibrated',d.calibratedScore],['Final',final]];
+ const data=state.actor.role==='employee'?[['Released score',final]]:[['BSC · 70%',d.assessment?.bsc],['Behaviour · 30%',d.assessment?.behaviour?.score],['Composite · 100%',d.supervisorScore],['Supervisor submission',d.supervisorScore],['Calibrated',d.calibratedScore],['Final after deduction',final]];
  return '<div class="score-comparison">'+data.map(([k,v])=>'<div class="score-box"><label>'+k+'</label><strong>'+(typeof v==='number'?v.toFixed(2):'—')+'</strong></div>').join('')+'</div>';
 }
 function evidencePanel(r){if(!info.evidence)return '';const writable=r.canAttach;return '<section class="panel"><div class="panel-head"><h2>Evidence files</h2></div><div class="panel-body">'+files.map(f=>'<p>'+escape(f.name)+' · '+escape(f.scan)+(f.scan==='Clean'?' · <a aria-label="Download '+escape(f.name)+'" href="/api/platform/files?download='+encodeURIComponent(f.id)+'">Download</a>':'')+'</p>').join('')+(writable?'<form id="attach"><div class="field"><label for="evidence-file">PDF, image or text file (up to 2 MiB)</label><input type="file" id="evidence-file" name="upload" accept=".pdf,.png,.jpg,.jpeg,.txt" required></div><div class="field"><label for="file-scope">Visibility</label><select name="visibility" id="file-scope"><option>Internal</option><option>Employee shared</option></select></div><p class="form-error" role="alert"></p><button class="button secondary" type="submit">Upload for scanning</button></form>':'')+'</div></section>';}
+function reviewTables(r){
+ const d=r.data;
+ const table=(title,columns,rows)=>rows?.length?'<section class="review-table"><h3>'+escape(title)+'</h3><div class="table-scroll"><table><thead><tr>'+columns.map(c=>'<th scope="col">'+escape(c[0])+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+columns.map(([,key])=>'<td>'+escape(row[key]??'—')+'</td>').join('')+'</tr>').join('')+'</tbody></table></div></section>':'';
+ const fields=[
+ table('Scorecard KPIs',[['KPI','title'],['Objective','objectiveName'],['Perspective','perspective'],['Weight (%)','weight'],['Target','target'],['Unit','unit']],d.goals?.map(g=>({...g,objectiveName:references(g.objective)}))),
+ table('KPI results',[['KPI','title'],['Actual','actual'],['Achievement (%)','achievement'],['Rating','rating'],['Evidence','evidence']],d.assessment?.items),
+ table('360 competencies',[['Competency','competency'],['Mean','score']],d.feedback?.competencies??d.assessment?.behaviour?.competencies),
+ table('Calibration',[['Panel score','score'],['Reason','reason'],['Recorded by','person'],['Time (Lagos)','time']],d.calibrations?.map(c=>({...c,person:r.people?.[c.by],time:c.at&&fmtDate(c.at)}))),
+ table('Score revisions',[['Revision','revision'],['Supervisor','supervisor'],['Calibrated','calibrated'],['Deduction','deductionPoints'],['Final','finalScore'],['Recorded by','person']],d.revisions?.map(c=>({...c,person:r.people?.[c.by]})))];
+ const extra=Object.fromEntries(Object.entries(d).filter(([k])=>!['goals','assessment','calibrations','revisions','supervisorScore','calibratedScore','finalScore'].includes(k)));
+ if(extra.feedback)extra.feedback=Object.fromEntries(Object.entries(extra.feedback).filter(([k])=>k!=='competencies'));
+ return fields.join('')+valueView(extra);
+}
+function timeline(history){
+ const groups=[];
+ for(const entry of history){const stage=entry.to??label(entry.action.split('.').at(-1));if(groups.at(-1)?.stage!==stage)groups.push({stage,entries:[]});groups.at(-1).entries.push(entry);}
+ return groups.map(g=>'<section class="event"><h3>'+escape(g.stage)+'</h3>'+g.entries.map(e=>'<p>'+escape(label(e.action.split('.').at(-1)))+' · '+escape(e.actor)+'</p><time>'+escape(fmtDate(e.at))+'</time>').join('')+'</section>').join('');
+}
 function detail(){
  const r=state.detail;if(!r)return '<div class="empty">Record unavailable.</div>';
- return '<button class="text-btn back" data-nav="'+escape(section)+'">← Back to '+escape(navLabel(section))+'</button>'+heading(r.title,navLabel(r.type)+' · Revision '+r.version,tag(r.status))+scorePanel(r)+(r.related?.length?'<div class="panel"><div class="panel-head"><h2>Employee reviews and actions</h2></div>'+rowTable(r.related)+'</div>':'')+'<div class="detail-grid"><section><div class="panel"><div class="panel-head"><h2>Record details</h2></div><div class="panel-body">'+valueView(r.data)+'</div></div>'+evidencePanel(r)+'</section><aside><div class="panel"><div class="panel-head"><h2>Available actions</h2></div><div class="panel-body action-stack">'+(commands(section,r)||'<p class="muted">No action is due from your role at this stage.</p>')+(r.type==='merit'&&['Exported','Reconciled'].includes(r.status)&&state.actor.role==='finance'?button('Download payroll instructions','data-export="payroll"',true):'')+'</div></div><div class="panel"><div class="panel-head"><h2>Activity</h2></div><div class="panel-body timeline">'+(r.history.map(e=>'<div class="event"><b>'+escape(e.to??label(e.action.split('.').at(-1)))+'</b><p>'+escape(e.actor)+'</p><time>'+escape(fmtDate(e.at))+'</time></div>').join('')||'<p class="muted">No visible events.</p>')+'</div></div></aside></div>';
+ return '<button class="text-btn back" data-nav="'+escape(section)+'">← Back to '+escape(navLabel(section))+'</button>'+heading(r.title,navLabel(r.type)+' · Revision '+r.version,tag(r.status))+scorePanel(r)+(r.related?.length?'<div class="panel"><div class="panel-head"><h2>Employee reviews and actions</h2></div>'+rowTable(r.related)+'</div>':'')+'<div class="detail-grid"><section><div class="panel"><div class="panel-head"><h2>Record details</h2></div><div class="panel-body">'+(r.type==='review'?reviewTables(r):valueView(r.data))+'</div></div>'+evidencePanel(r)+'</section><aside><div class="panel"><div class="panel-head"><h2>Available actions</h2></div><div class="panel-body action-stack">'+(commands(section,r)||'<p class="muted">No action is due from your role at this stage.</p>')+(r.type==='merit'&&['Exported','Reconciled'].includes(r.status)&&state.actor.role==='finance'?button('Download payroll instructions','data-export="payroll"',true):'')+'</div></div><div class="panel"><div class="panel-head"><h2>Activity</h2></div><div class="panel-body timeline">'+(timeline(r.history)||'<p class="muted">No visible events.</p>')+'</div></div></aside></div>';
 }
 const reportFilters={cycle:'',frequency:'',company:'',department:'',manager:''};
 function operationsReport(){
@@ -189,8 +217,14 @@ function reports(){
 function audit(){return heading('Audit trail','Recent authorised changes')+'<div class="panel table-scroll"><table><thead><tr><th>Time · Lagos</th><th>Action</th><th>Actor</th><th>Transition</th></tr></thead><tbody>'+(state.audit??[]).map(e=>'<tr><td>'+escape(fmtDate(e.at))+'</td><td>'+escape(e.action)+'</td><td>'+escape(e.actor)+'</td><td>'+escape([e.from,e.to].filter(Boolean).join(' → '))+'</td></tr>').join('')+'</tbody></table></div>';}
 function accountsPage(){return heading('User accounts','Provision and deactivate platform access.',button('Create account','data-account="new"'))+'<div class="panel table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>'+accounts.users.map(u=>'<tr><td>'+escape(u.name)+'</td><td>'+escape(u.email)+'</td><td>'+escape(state.roles[u.role])+'</td><td>'+tag(u.active?'Active':'Inactive')+'</td><td>'+(u.active&&u.id!==state.actor.id?button('Deactivate','data-disable="'+escape(u.id)+'"',true):'')+'</td></tr>').join('')+'</tbody></table></div>';}
 function roleSelector(){const roles=state.actor.grantedRoles??[];return roles.length>1?'<select id="active-role" aria-label="Active role">'+roles.map(k=>'<option value="'+escape(k)+'" '+(k===state.actor.role?'selected':'')+'>'+escape(state.roles[k])+'</option>').join('')+'</select>':'';}
+function setupPage(){
+ const w=state.setup;
+ return heading('Set up a review cycle',w.cycleTitle||'Annual preparation')+'<label>Review year <input id="setup-year" type="number" min="2000" max="2200" value="'+w.year+'"></label>'+grid([['Eligible Track A employees',w.eligible],['Missing managers',w.managers],['Missing tracks',w.missingTracks]])+'<section class="panel panel-body"><h2>Ready to open?</h2><p>'+escape(w.ready?'Ready for PM to open the period.':w.blockers.join(' · '))+'</p><ol>'+w.steps.map(s=>'<li><strong>'+escape(s.title)+'</strong> '+tag(s.status)+'<p>'+escape(s.owner)+(s.optional?' · Optional':'')+'</p><p>'+escape(s.reason)+'</p>'+(permitted(s.target)?'<a data-setup-link href="#'+escape(s.target)+(s.id?'/'+escape(s.id):'')+'">Open '+escape(navLabel(s.target))+'</a>':'')+'</li>').join('')+'</ol></section>';
+}
+document.addEventListener('click',e=>{if(e.target.closest('[data-setup-link]'))returnToSetup=true;});
+document.addEventListener('change',e=>{if(e.target.id==='setup-year'&&e.target.validity.valid){setupYear=Number(e.target.value);reload().catch(routeError);}});
 function render(){
- const content=selected?detail():section==='home'?home():section==='reports'?reports():section==='audit'?audit():section==='accounts'?accountsPage():listing();
+ const content=selected?detail():section==='setup'?setupPage():section==='home'?home():section==='reports'?reports():section==='audit'?audit():section==='accounts'?accountsPage():listing();
  const groups=navigation(),current=groups.find(g=>g.keys.includes(section));
  const link=(key,title,ic,active)=>'<a href="#'+key+'" class="nav-link '+(active?'active':'')+'" '+(active?'aria-current="'+(key===section?'page':'location')+'"':'')+'>'+navIcon(ic)+escape(title)+'</a>';
  const tabs=current&&current.keys.length>1?'<nav class="section-tabs" aria-label="'+escape(current.title)+'">'+current.keys.map(k=>'<a href="#'+k+'" '+(k===section?'aria-current="page"':'')+'>'+escape(navLabel(k))+'</a>').join('')+'</nav>':'';
@@ -200,10 +234,13 @@ function render(){
    '</nav><div class="side-bottom"><button class="text-btn" data-signout>Sign out</button></div></aside>';
  app.innerHTML='<div class="shell '+(menuOpen?'menu-open':'')+'">'+sidebar+(menuOpen?'<button class="drawer-shade" data-menu aria-label="Dismiss navigation"></button>':'')+
    '<div class="workspace" '+(menuOpen?'inert':'')+'><header class="topbar"><div class="breadcrumbs"><button class="mobile-menu" data-menu aria-label="Open navigation" aria-controls="primary-sidebar" aria-expanded="'+menuOpen+'">☰</button><span>Performance</span><span>/</span><strong>'+escape(current?.title??navLabel(section))+'</strong></div><div class="user-top">'+roleSelector()+'<div class="avatar">'+escape(state.actor.name.split(' ').slice(0,2).map(n=>n[0]).join(''))+'</div><div class="user-info"><strong>'+escape(state.actor.name)+'</strong><small>'+escape(state.roles[state.actor.role])+'</small></div></div></header>'+
-   (info.mode!=='live'?'<div class="demo-banner">Acceptance workspace · Fictional employee records</div>':'')+tabs+'<main id="main" tabindex="-1" class="content">'+content+'</main></div></div>';
+   (info.mode!=='live'?'<div class="demo-banner">Acceptance workspace · Fictional employee records</div>':'')+tabs+'<main id="main" tabindex="-1" class="content">'+(returnToSetup&&section!=='setup'?'<p><a href="#setup">Return to cycle setup</a></p>':'')+content+'</main></div></div>';
 
+ const tabsNode=app.querySelector('.section-tabs'),active=tabsNode?.querySelector('[aria-current]');
+ if(active)tabsNode.scrollLeft+=active.getBoundingClientRect().left-tabsNode.getBoundingClientRect().left-16;
 }
 function input(f){
+ if(!f.hint){const hints={frequency:'Quarterly creates four formal reviews; biannual creates two. Each formal review has its own 360 campaign.',minimumAnonymous:'Minimum number of distinct anonymous observers required before an aggregate can be released.',start:currentForm?.id==='merit.new'?'First date of the approved annual or half-year compensation window.':null};if(hints[f.key])f={...f,hint:hints[f.key]};}
  const id='f-'+f.key,attrs=(f.hint?'aria-describedby="'+id+'-hint" ':'')+' name="'+escape(f.key)+'" id="'+escape(id)+'" '+(f.optional?'':'required')+' ';
  let control;
  if(f.type==='select')control='<select '+attrs+'>'+ (f.optional?'<option value="">None</option>':'')+f.choices.map(c=>{const val=c.value??c;return '<option value="'+escape(val)+'" '+(String(f.default)===String(val)?'selected':'')+'>'+escape(c.label??c)+'</option>';}).join('')+'</select>';
@@ -219,7 +256,54 @@ function finalPreview(){
  const el=dialog.querySelector('[data-final-preview]');
  if(el)el.textContent=(!input||input.validity.valid)&&Number.isFinite(final)&&final>=1&&final<=5?final.toFixed(2)+' / 5 · Rating '+(final>=4.5?5:final>=3.75?4:final>=2.75?3:final>=2?2:1):'Check deduction';
 }
-function openForm(form,kind='workflow'){currentForm={...form,kind,section,recordId:selected,version:selected?state.detail?.version:0,actor:state.actor.id,role:state.actor.role,requestId:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};dialog.innerHTML='<h2 id="dialog-title">'+escape(form.label)+'</h2><form id="operation">'+(form.id==='review.lock'?'<div class="notice"><div>Supervisor '+escape(state.detail.data.supervisorScore.toFixed(2))+' · Calibrated '+escape((state.detail.data.calibratedScore??state.detail.data.supervisorScore).toFixed(2))+'<br>Final score: <strong data-final-preview></strong>'+(form.fields.some(f=>f.key==='deduction')?'':'<br>Deduction 0.00 · Disabled by cycle policy')+'</div></div>':'')+form.fields.map(input).join('')+'<p class="form-error" role="alert"></p><div class="actions">'+button('Cancel','type="button" data-cancel',true)+'<button type="submit" class="button teal">'+escape(form.label)+'</button></div></form>';dialog.showModal();if(form.id==='review.lock')finalPreview();}
+function importControls(form){
+  const goals=form.id==='review.importGoals';
+  return form.fields.filter(f=>!['csv','versions'].includes(f.key)).map(input).join('')+(goals?'<p>Download a scorecard template: <a href="/api/platform/kpi-template?format=xlsx&id='+encodeURIComponent(selected)+'">Excel workbook</a> · <a href="/api/platform/kpi-template?format=csv&id='+encodeURIComponent(selected)+'">CSV file</a></p>':'')+'<div class="field"><label for="upload-sheet">Select '+(goals?'CSV or Excel workbook':'CSV file')+'</label><input id="upload-sheet" type="file" '+(goals?'':'required')+' accept="'+(goals?'.csv,.xlsx':'.csv')+'"></div><div id="import-results" aria-live="polite"></div>';
+}
+function formFields(form){
+ if(form.id==='review.importGoals'&&state.detail.kpiSources?.length){
+  const sources=state.detail.kpiSources;
+  const choices=sources.map((source,i)=>'<fieldset><legend>'+escape(source.label)+'</legend>'+source.goals.map((g,j)=>'<div class="field"><label><input type="checkbox" data-kpi-choice="'+i+'/'+j+'"> '+escape(g.title)+'</label><label>Target for '+escape(g.title)+'<input type="number" step="any" data-target="'+i+'/'+j+'" value="'+escape(g.target)+'"></label></div>').join('')+'</fieldset>').join('');
+  const employees=(state.detail.teamDrafts??[]).map(e=>'<label><input type="checkbox" data-staff="'+escape(e.staffId)+'"> '+escape(e.name)+'</label>').join('');
+  return importControls(form)+'<details><summary>Choose template KPIs or copy the last baseline</summary>'+choices+(employees?'<fieldset><legend>Apply to these team members (blank uses current review)</legend>'+employees+'</fieldset>':'')+'</details>';
+ }
+ if(form.id==='review.goal'){
+  const core=['title','objective','perspective','weight','target','unit'];
+  return core.map(k=>input(form.fields.find(f=>f.key===k))).join('')+'<details class="advanced"><summary>Advanced · scoring and evidence</summary>'+form.fields.filter(f=>!core.includes(f.key)).map(input).join('')+'</details>';
+ }
+ if(form.fields.some(f=>f.key==='csv')){
+  return importControls(form);
+ }
+ return form.fields.map(input).join('');
+}
+document.addEventListener('invalid',e=>{const group=e.target.closest('details');if(group)group.open=true;},true);
+document.addEventListener('input',e=>{if(currentForm?.preview&&e.target.closest('#operation')){delete currentForm.preview;document.querySelector('#import-results').replaceChildren();e.target.form.querySelector('[type=submit]').textContent='Preview file';}});
+async function previewFile(target,form,values){
+ const file=form.querySelector('#upload-sheet').files[0];
+ const checked=[...form.querySelectorAll('[data-kpi-choice]:checked')];
+ if(file&&checked.length)throw Error('Choose a file or template selections for this preview.');
+ if(!checked.length&&(!file||file.size>1500000))throw Error('Choose a file smaller than 1.5 MB.');
+ let workbook;
+ if(checked.length){
+  const staff=[...form.querySelectorAll('[data-staff]:checked')].map(c=>c.dataset.staff);
+  const goals=checked.map(c=>{const [i,j]=c.dataset.kpiChoice.split('/');return {...state.detail.kpiSources[i].goals[j],target:form.querySelector('[data-target="'+i+'/'+j+'"]').value};});
+  const headers=[...Object.keys(goals[0]),'staffId'];
+  const rows=(staff.length?staff:['']).flatMap(id=>goals.map(g=>headers.map(k=>k==='staffId'?id:g[k])));
+  values.csv=[headers,...rows].map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\n');
+ }else if(file.name.toLowerCase().endsWith('.xlsx')){
+  const data=new Uint8Array(await file.arrayBuffer());let binary='';
+  for(let i=0;i<data.length;i+=16000)binary+=String.fromCharCode(...data.subarray(i,i+16000));
+  workbook=btoa(binary);
+ }else values.csv=await file.text();
+ const preview=await api('import-preview',{type:target.section,id:target.recordId,action:target.id,values,workbook});
+ if(target!==currentForm)return;
+ const row=r=>'<tr><td>'+escape(r.row)+'</td><td>'+escape(r.employee||r.title)+'</td><td>'+escape(r.valid?'Valid':'Error')+'</td><td>'+escape(r.error||'—')+'</td></tr>';
+ form.querySelector('#import-results').innerHTML='<h3>Import preview</h3><table><thead><tr><th>Row</th><th>Employee or KPI</th><th>Status</th><th>Reason</th></tr></thead><tbody>'+preview.rows.map(row).join('')+'</tbody></table>'+preview.groups.map(g=>'<p>'+escape(g.employee)+' · '+Object.entries(g.totals).map(([k,v])=>escape(k)+' '+escape(v)+'%').join(' · ')+' · Total '+escape(g.total)+'% '+escape(g.error)+'</p>').join('');
+ if(preview.valid){target.preview=preview;form.querySelector('[type=submit]').textContent='Confirm import';}
+}
+function openForm(form,kind='workflow'){currentForm={...form,kind,section,recordId:selected,version:selected?state.detail?.version:0,actor:state.actor.id,role:state.actor.role,requestId:Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')};dialog.innerHTML='<h2 id="dialog-title">'+escape(form.label)+'</h2><form id="operation">'+(form.id==='review.lock'?'<div class="notice"><div>Supervisor '+escape(state.detail.data.supervisorScore.toFixed(2))+' · Calibrated '+escape((state.detail.data.calibratedScore??state.detail.data.supervisorScore).toFixed(2))+'<br>Final score: <strong data-final-preview></strong>'+(form.fields.some(f=>f.key==='deduction')?'':'<br>Deduction 0.00 · Disabled by cycle policy')+'</div></div>':'')+formFields(form)+'<p class="form-error" role="alert"></p><div class="actions">'+button('Cancel','type="button" data-cancel',true)+'<button type="submit" class="button teal">'+escape(form.label)+'</button></div></form>';if(form.fields.some(f=>f.key==='csv'))dialog.querySelector('[type=submit]').textContent='Preview file';
+ if(form.id==='review.goal')dialog.querySelector('[type=submit]').textContent='Save KPI';
+ dialog.showModal();if(form.id==='review.lock')finalPreview();}
 async function download(report){
  const response=await fetch('/api/platform/export?report='+encodeURIComponent(report)+'&id='+encodeURIComponent(selected)+'&'+new URLSearchParams(['completion','scores'].includes(report)?reportFilters:{}),{signal:AbortSignal.timeout(30000)});if(!response.ok)throw Error((await response.json()).error);
  const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=report+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -235,6 +319,7 @@ document.addEventListener('click',async e=>{
   else if(b.dataset.listStep){listPage+=Number(b.dataset.listStep);document.querySelector('#results').innerHTML=pagedResults();document.querySelector('#results button[data-list-step]:not([disabled])')?.focus();}
   else if(b.dataset.nav)go(b.dataset.nav);
   else if(b.dataset.record)go(b.dataset.type,b.dataset.record);
+  else if(b.dataset.command==='review.applyTemplate'){openForm(state.detail.actions.find(a=>a.id==='review.importGoals'));const choices=dialog.querySelector('details');if(choices)choices.open=true;}
   else if(b.dataset.command){const options=selected?state.detail.actions:state.available[section];openForm(options.find(x=>x.id===b.dataset.command));}
   else if(b.hasAttribute('data-cancel'))dialog.close();
   else if(b.dataset.export)await download(b.dataset.export);
@@ -258,10 +343,16 @@ document.addEventListener('submit',async e=>{
     const entity=selected,requestId=form.dataset.requestId||=crypto.randomUUID();const file=values.upload;if(file.size>2*1024*1024)throw Error('Maximum file size is 2 MiB.');
     const buffer=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<buffer.length;i+=16384)binary+=String.fromCharCode(...buffer.subarray(i,i+16384));
     await api('files',{entity,requestId,name:file.name,base64:btoa(binary),visibility:values.visibility});form.dataset.committed='true';await reload();say('File quarantined for scanning.');
-  }else if(form.id==='signin'){const auth=await api('login',values);csrf=auth.csrf;section='home';selected='';location.hash='home';await reload();}
+  }else if(form.id==='signin'){const auth=await api('login',values);csrf=auth.csrf;if(auth.changeRequired){passwordChange();return;}section='home';selected='';location.hash='home';await reload();}
+  else if(form.id==='change-password'){await api('password',values);login();say('Password changed. Sign in again.');}
   else if(form.id==='operation'){
     const target=currentForm;
     if(!target||target.actor!==state.actor.id||target.role!==state.actor.role||target.section!==section||target.recordId!==selected)throw Error('This view changed. Open the record again.');
+    if(form.querySelector('#upload-sheet')){
+     if(!target.preview){await previewFile(target,form,values);return;}
+     values.csv=target.preview.csv;
+     if(target.id==='review.importGoals')values.versions=JSON.stringify(target.preview.versions);
+    }
     if(currentForm.kind==='account'||currentForm.kind==='disable'){
     if(currentForm.kind==='account')values.additionalRoles=(values.additionalRoles||'').split(',').map(x=>x.trim()).filter(Boolean);await api('accounts',currentForm.kind==='disable'?{disable:currentForm.target}:values);dialog.close();form.dataset.committed='true';await reload();}
     else{const result=await api('command',{type:target.section,id:target.recordId||undefined,version:target.version,action:target.id,values,requestId:target.requestId});if(target!==currentForm)return;dialog.close();form.dataset.committed='true';section=result.type;selected=result.id;location.hash=section+'/'+selected;try{await reload();}catch(err){if(err.status!==404)throw err;selected='';section='home';location.hash='home';await reload();}}

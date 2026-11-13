@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {copyFileSync,mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomBytes,randomUUID,generateKeyPairSync,sign} from 'node:crypto';
@@ -23,7 +23,7 @@ test('empty installation provisions real accounts and roster via authenticated H
  const admin=await f.login({email:'admin@example.invalid',password:pwd});
  const add=async(role,email)=>{const response=await f.post('accounts',{name:role,role,department:'Operations',email,password:pwd},admin);assert.equal(response.status,201);return (await response.json()).id;};
  const mgr=await add('manager','manager@example.invalid');await add('pm','pm@example.invalid');
- const pm=await f.login({email:'pm@example.invalid',password:pwd});const command={requestId:randomUUID(),type:'employee',action:'employee.new',values:{staffId:'LIVE-A',name:'Test install person',email:'person@example.invalid',company:'TCG',department:'Operations',jobTitle:'Analyst',managerId:mgr,confirmed:'Yes',commercial:'No',peopleManager:'No',joinedAt:'2026-01-02'}};
+ const temporary=await f.login({email:'pm@example.invalid',password:pwd});assert.equal((await f.post('password',{current:pwd,password:pwd+'-changed'},temporary)).status,200);const pm=await f.login({email:'pm@example.invalid',password:pwd+'-changed'});const command={requestId:randomUUID(),type:'employee',action:'employee.new',values:{staffId:'LIVE-A',name:'Test install person',email:'person@example.invalid',company:'TCG',department:'Operations',jobTitle:'Analyst',managerId:mgr,confirmed:'Yes',commercial:'No',peopleManager:'No',joinedAt:'2026-01-02'}};
  const saved=await f.post('command',command,pm);assert.equal(saved.status,200);const result=await saved.json();
  const replay=await f.post('command',command,pm);assert.deepEqual(await replay.json(),result);
  assert.equal((await f.post('command',{...command,values:{...command.values,name:'Changed'}},pm)).status,422);
@@ -32,7 +32,7 @@ test('empty installation provisions real accounts and roster via authenticated H
  const bad=await f.post('command',{...command,requestId:randomUUID()},{...pm,csrf:'forged'});assert.equal(bad.status,403);
  const backup=join(f.dir,'restored.sqlite');f.store.db.prepare('VACUUM INTO ?').run(backup);
  assert.equal(readFileSync(backup).includes(Buffer.from('Test install person')),false);
- const restored=openPlatform(backup,{key:f.key});try{assert.equal(restored.load().records[0].title,'Test install person');assert.equal(restored.load().events.length,1);}finally{restored.close();}
+ copyFileSync(f.file+'.feedback.key',backup+'.feedback.key');const restored=openPlatform(backup,{key:f.key});try{assert.equal(restored.load().records[0].title,'Test install person');assert.equal(restored.load().events.length,1);}finally{restored.close();}
  assert.throws(()=>f.store.db.exec('DELETE FROM snapshots'),/Immutable/);
 });
 test('stale edits, out-of-scope actions and protected 360 identities are denied through the service',async t=>{
@@ -114,4 +114,46 @@ test('file uploads replay safely and confidential attachments follow purpose-bou
  assert.equal((await list()).length,1);
  const policy=f.store.readState().records.find(r=>r.type==='policy');
  assert.equal((await f.post('files',{...payload,entity:policy.id},observer)).status,403);
+});
+
+test('disabled local login and gateway-protected roles cannot establish password sessions',async t=>{
+ for(const opts of [{localLogin:'off'},{ssoKey:'configured'}]){
+  const f=await fixture(t,{opts});
+  assert.equal((await f.post('login',{email:'admin@example.invalid',password:pwd})).status,401);
+ }
+});
+test('integration rotation accepts both active tokens, audits use and enforces source-IP restrictions',async t=>{
+ const f=await fixture(t,{opts:{noticeToken:'old-token,new-token'}});
+ for(const token of ['old-token','new-token']){
+  assert.equal((await fetch(f.base+'/api/integration/outbox',{headers:{authorization:'Bearer '+token}})).status,200);
+ }
+ assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM access_log WHERE operation='integration.notification.accept'").get().n,2);
+ const other=await fixture(t,{opts:{noticeToken:'new-token',integrationIps:'192.0.2.1'}});
+ assert.equal((await fetch(other.base+'/api/integration/outbox',{headers:{authorization:'Bearer new-token'}})).status,403);
+});
+test('session idle limit and forced first-password change are enforced server-side',async t=>{
+ const f=await fixture(t);
+ const admin=await f.login({email:'admin@example.invalid',password:pwd});
+ await f.post('accounts',{name:'Fixture',role:'employee',department:'Ops',email:'new@example.invalid',password:pwd},admin);
+ const auth=await f.login({email:'new@example.invalid',password:pwd});
+ assert.equal(auth.changeRequired,true);
+ const view=()=>fetch(f.base+'/api/platform/view',{headers:{cookie:auth.cookie}});
+ assert.equal((await view()).status,403);
+ assert.equal((await f.post('password',{current:pwd,password:pwd+'x'},auth)).status,200);
+ const fresh=await f.login({email:'new@example.invalid',password:pwd+'x'});
+ f.store.db.prepare('UPDATE sessions SET last_seen=0').run();
+ assert.equal((await fetch(f.base+'/api/platform/view',{headers:{cookie:fresh.cookie}})).status,401);
+});
+test('confidential response versions survive data-key rotation independently of general snapshots',async t=>{
+ const f=await fixture(t,{demo:true});
+ f.store.change(s=>s.records.push({id:'privacy-fixture',version:1,type:'response',rater:'fictional-observer',answers:{example:'restricted fixture'}}));
+ const row=f.store.db.prepare('SELECT payload FROM entities WHERE id=?').get('privacy-fixture');
+ assert.equal(f.store.open(row.payload).rater,undefined);
+ const ciphertext=()=>f.store.db.prepare('SELECT payload FROM feedback_private WHERE entity=?').get('privacy-fixture').payload;
+ const before=ciphertext();f.store.rotateFeedbackKey();
+ assert.notEqual(ciphertext(),before);
+ assert.equal(f.store.entity('privacy-fixture').answers.example,'restricted fixture');
+ const manager=await f.login({userId:'manager'});
+ const lookup=async id=>{const res=await fetch(f.base+'/api/platform/raw-response/'+id,{headers:{cookie:manager.cookie}});return [res.status,await res.text()];};
+ const denial=await lookup('privacy-fixture');assert.equal(denial[0],404);assert.deepEqual(denial,await lookup('absent-fixture'));
 });

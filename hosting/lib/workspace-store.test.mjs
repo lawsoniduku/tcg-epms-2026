@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-import {loadWorkspace,receipt,commitWorkspace} from '../hosting/lib/workspace-store.ts';
+import {loadWorkspace,receipt,commitWorkspace} from './workspace-store.ts';
 
 test('hosted legacy data migrates atomically; stale commits preserve records, order and receipts',async()=>{
  const sqlite=new DatabaseSync(':memory:');
  try{
-   for(const file of ['0000_greedy_triton','0001_workspace_items'])sqlite.exec(readFileSync(new URL('../hosting/drizzle/'+file+'.sql',import.meta.url),'utf8'));
+   for(const file of ['0000_greedy_triton','0001_workspace_items'])sqlite.exec(readFileSync(new URL('../drizzle/'+file+'.sql',import.meta.url),'utf8'));
    const db={
      prepare(sql){
        return {bind(...args){const stmt=sqlite.prepare(sql);return {first:async()=>stmt.get(...args),run:async()=>stmt.run(...args),batch(){return {results:stmt.all(...args)};}};}};

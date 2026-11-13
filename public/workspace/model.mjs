@@ -24,8 +24,7 @@ export const isRole = (actor,...allowed) => allowed.includes(actor.role);
 export const signed = actor => actor?.id && actor.active !== false;
 export const isoDay = at => new Date(new Date(at).valueOf()+3600000).toISOString().slice(0,10);
 export const titleCase = value => String(value).replaceAll('_',' ');
-export const round = n => Math.round((n+Number.EPSILON)*100)/100;
-export const average = values => round(values.reduce((a,b)=>a+b,0)/values.length);
+export {rounded as round,mean as average} from './decimal.mjs';
 export const need = (value,message) => requireThat(value,message);
 export function dateValue(value) {
   need(/^\d{4}-\d{2}-\d{2}$/.test(value),'Enter a valid calendar date.');
@@ -119,6 +118,7 @@ export function scope(s,u,r) {
   if(r.type==='sourceBatch')return isRole(u,'sales','finance','pm','auditor');
   if(r.type==='migration')return isRole(u,'pm','admin','auditor');
   if(r.type==='scenario')return isRole(u,'finance','executive');
+  if(r.type==='setupCheck')return isRole(u,'pm','admin');
   if(r.type==='track')return isRole(u,'pm')||heads(s,u,r);
   if(r.type==='response')return !own(u,r)&&(r.rater===u.id||isRole(u,'pm')||(r.status==='Nomination'&&manages(s,u,s.records.find(review=>review.id===r.reviewId))));
   if(r.type==='merit')return isRole(u,'finance','executive') || u.role==='pm'&&r.status==='HR equity review';

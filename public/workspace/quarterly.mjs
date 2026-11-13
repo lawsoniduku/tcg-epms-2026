@@ -1,3 +1,4 @@
+import {weighted,percent} from './decimal.mjs';
 import {feedbackActions,redactThemes} from './feedback.mjs';
 import {effectiveGoals} from './governance.mjs';
 import {action,addWorkdays,average,choices,create,dateValue,evidenceScore,field,get,heads,isRole,isoDay,journal,list,manages,need,nextStatus,noFields,note,notify,num,option,own,perspectives,pick,ratingFor,round,scoreValue,trackAScore,yes} from './model.mjs';
@@ -11,13 +12,13 @@ const employee=(ctx,r)=>own(ctx.actor,r);
 const atStage=(stage,allowed)=>(ctx,r)=>r.status===stage&&allowed(ctx,r);
 const updated=(r,fields)=>Object.assign(r,fields);
 const reason=()=>[note('reason','Reason'),field('evidence','Evidence reference')];
-function qa(r,p) {
+export function qa(r,p) {
   need(r.goals.length,'Add KPIs before submission.');
   need(round(r.goals.reduce((sum,g)=>sum+g.weight,0))===100,'KPI weights must total 100%.');
   perspectives.forEach((key,i)=>need(round(r.goals.filter(g=>g.perspective===key).reduce((sum,g)=>sum+g.weight,0))===p.weights[i],key+' KPIs must total '+p.weights[i]+'%.'));
   if(r.snapshot.peopleManager)need(r.goals.some(g=>g.leadership==='Yes'),'Include a leadership and performance governance KPI.');
 }
-const goalFields=ctx=>[
+export const goalFields=ctx=>[
   field('title','KPI name'),pick('objective','Linked individual objective',choices(list(ctx.s,'strategy').filter(o=>o.level==='Individual'&&o.status==='Approved'))),
   pick('perspective','BSC perspective',perspectives),note('outcome','Expected outcome'),num('weight','Weight within BSC (%)',0.01,100),
   num('baseline','Baseline',-1e12,1e12),num('target','Target',-1e12,1e12),field('unit','Unit of measure'),
@@ -26,7 +27,7 @@ const goalFields=ctx=>[
   field('source','Authoritative data source'),field('evidence','Evidence required'),yes('leadership','People leadership KPI'),
   num('gateCap','Maximum rating if critical gate fails',1,5,{default:5}),field('gate','Critical gate definition','text',{optional:true})
 ];
-const goalsEditable=(ctx,r)=>r.status==='Goal setting'&&(manager(ctx,r)||employee(ctx,r));
+export const goalsEditable=(ctx,r)=>r.status==='Goal setting'&&(manager(ctx,r)||employee(ctx,r));
 const canNominate=(ctx,r)=>own(ctx.actor,r) && (r.type==='probation'
   ? !!r.feedbackConfig && ['Final assessment','Extension review'].includes(r.status)
   : ['In progress','Self-review','Manager assessment'].includes(r.status)&&cycle(ctx,r).behaviourMode==='Full 360');
@@ -50,8 +51,7 @@ const nomination=action('review.nominate','Nominate 360 observer',canNominate,(c
     journal(ctx,item,'response.nominate');notify(ctx,item,r.actingReviewer || r.snapshot.managerId,'Validate a 360 nomination');return r;
   });
 export const probationNomination={...nomination,id:'probation.nominate'};
-export const reviewActions=[
-  action('review.goal','Add KPI',goalsEditable,goalFields,(ctx,r,v)=>{
+export function addGoal(r,v){
     need(Number.isInteger(Number((v.weight*100).toFixed(6))),'Weights support up to two decimal places.');
     need(!r.goals.some(g=>g.title.toLowerCase()===v.title.toLowerCase()),'KPI name already exists on this scorecard.');
     const goal={...v,id:crypto.randomUUID(),anchors:[]};
@@ -68,6 +68,10 @@ export const reviewActions=[
     }
     if(v.gateCap<5)need(v.gate,'Describe the critical gate.');
     r.goals.push(goal);return r;
+}
+export const reviewActions=[
+  action('review.goal','Add KPI',goalsEditable,goalFields,(ctx,r,v)=>{
+    return addGoal(r,v);
   }),
   action('review.applyTemplate','Apply approved KPI template',goalsEditable,(ctx,r)=>[
     pick('template','Role or department template',choices(list(ctx.s,'template').filter(t=>t.status==='Approved'&&t.department===r.snapshot.department&&(!t.jobTitle||t.jobTitle===r.snapshot.jobTitle))))
@@ -114,9 +118,9 @@ export const reviewActions=[
       const achieved=g.gate&&v['pass_'+g.id]!=='Yes'?Math.min(raw,g.gateCap):raw;
       const rationale=v['rationale_'+g.id];
       if(achieved!==3||g.gate&&v['pass_'+g.id]!=='Yes')need(rationale,'Explain the rating and any failed gate for '+g.title+'.');
-      return {rationale,goalId:g.id,title:g.title,actual:v['actual_'+g.id],weight:g.weight,raw,rating:achieved,evidence:v['evidence_'+g.id],target:g.target,achievement:g.direction==='Higher is better'?round(100*v['actual_'+g.id]/g.target):null};
+      return {rationale,goalId:g.id,title:g.title,actual:v['actual_'+g.id],weight:g.weight,raw,rating:achieved,evidence:v['evidence_'+g.id],target:g.target,achievement:g.direction==='Higher is better'?percent(v['actual_'+g.id],g.target):null};
     });
-    const bsc=round(items.reduce((sum,g)=>sum+g.rating*g.weight,0)/100);
+    const bsc=weighted(items.map(g=>g.rating),items.map(g=>g.weight));
     const behaviour=behaviourResult(ctx,r);
     r.assessment={items,bsc,behaviour,summary:v.summary,by:ctx.actor.id,at:ctx.at};
     r.supervisorScore=cycle(ctx,r).scoringVersion==='4.2'?compositeScore(items,behaviour):trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
@@ -187,7 +191,7 @@ export function behaviourResult(ctx,r) {
     for(const [key,label] of r.campaign.questions || []){
       const observed=valid.filter(response=>response.answers?.[key] && response.answers[key]!=='NOT_OBSERVED');
       if(observed.filter(response=>response.category!=='Manager').length >= (p.minimumAnonymous||3)){
-        competencies.push({competency:label,score:round(observed.reduce((sum,a)=>sum+Number(a.answers[key]),0)/observed.length)});
+        competencies.push({competency:label,score:average(observed.map(a=>Number(a.answers[key])))});
       }
     }
     return {source:'360 feedback',score,units,divisor,competencies,method:'Equal individual raters',campaign:r.campaign.id,periodStart:c.start,periodEnd:c.end};
