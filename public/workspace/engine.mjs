@@ -1,3 +1,4 @@
+import {questionsFor,defaultWeights} from './review-design.mjs';
 import {importGoals} from './goal-import.mjs';
 import {setupChecklist,reviewTracks} from './setup.mjs';
 import {newCadence,cadenceActions} from './cadence.mjs';
@@ -106,7 +107,7 @@ function displayRecord(ctx,r){
     return visible;
   }
   if(r.type==='employee')return {staffId:r.staffId,name:r.title,company:r.company,department:r.department,jobTitle:r.jobTitle,manager:r.managerId,confirmed:r.confirmed,commercial:r.commercial,joinedAt:r.joinedAt,track:r.track,email:r.email,businessUnit:r.businessUnit,team:r.team,grade:r.grade};
-  if(r.type==='cycle')return {...(r.behaviourMode==='Full 360'&&isRole(ctx.actor,'pm') ? {campaignProgress:campaignProgress(ctx,r),feedbackDeadline:dueDate(ctx,{cycleId:r.id})} : {}),start:r.start,end:r.end,behaviourMode:r.behaviourMode,policyId:r.policyId,selfDue:r.selfDue,managerDue:r.managerDue,calibrationDue:r.calibrationDue,closeDue:r.closeDue,eligible:r.membership.length};
+  if(r.type==='cycle')return {componentWeights:r.componentWeights??defaultWeights,questions:questionsFor(r),...(r.behaviourMode==='Full 360'&&isRole(ctx.actor,'pm') ? {campaignProgress:campaignProgress(ctx,r),feedbackDeadline:dueDate(ctx,{cycleId:r.id})} : {}),start:r.start,end:r.end,behaviourMode:r.behaviourMode,policyId:r.policyId,selfDue:r.selfDue,managerDue:r.managerDue,calibrationDue:r.calibrationDue,closeDue:r.closeDue,eligible:r.membership.length};
   if(r.type==='merit'&&ctx.actor.role==='pm')return {cadence:r.frequency,pool:r.pool,proposedCostNGN:(r.costKobo??0)/100,lines:r.lines.map(l=>({name:l.name,rating:l.rating,nominal:l.nominal,eligibility:l.eligibility})),equity:r.equity};
   if(r.type==='commercial'&&own(ctx.actor,r)&&!['Released','Acknowledged'].includes(r.status))return {month:r.month,target:r.target,unit:r.unit,coaching:r.coaching};
   if(r.type==='probation'&&own(ctx.actor,r))return {...(r.status==='Closed'?{outcome:r.outcome,decision:r.decisions?.at(-1)?.reason}:{}),deliverables:r.deliverables,support:r.support,dates:r.dates,finalDue:r.finalDue,checkpoints:r.checkpoints};

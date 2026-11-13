@@ -15,7 +15,7 @@ The 5 November build passed 49 automated tests and JavaScript syntax checks with
 
 ## Standalone engineering candidate, 13 November
 
-The current standalone suite has 56 Node tests. The count excludes tests retired with the legacy server and hosted adapter. The current Chromium suites run the quarterly and half-year journeys, exercise role navigation and check seven screens at 390, 768 and 1440 pixels. The browser checks assert page width and horizontal access to the selected primary control. The engineering archive includes the screenshots. Manual screen-reader, corporate identity, representative load and disaster-recovery acceptance belong in staging.
+The current standalone suite has 57 Node tests. The count excludes tests retired with the legacy server and hosted adapter. The current Chromium suites run the quarterly and half-year journeys, exercise role navigation and check seven screens at 390, 768 and 1440 pixels. The browser checks assert page width and horizontal access to the selected primary control. The engineering archive includes the screenshots. Manual screen-reader, corporate identity, representative load and disaster-recovery acceptance belong in staging.
 
 ## Suggested TCG acceptance session
 

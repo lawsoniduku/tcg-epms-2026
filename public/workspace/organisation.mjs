@@ -1,4 +1,5 @@
 import {competencyBank} from './feedback.mjs';
+import {defaultWeights,designActions,questionsFor} from './review-design.mjs';
 import {rosterAt,rosterSnapshot,recordAssignment} from './roster.mjs';
 import {trackAt} from './governance.mjs';
 import {action,activePolicy,addMonths,addWorkdays,anyRole,choices,create,csv,dateValue,field,get,heads,isRole,isoDay,journal,list,need,noFields,note,notify,num,option,perspectives,pick,readFields,route,ratingFor,yes} from './model.mjs';
@@ -132,14 +133,14 @@ export const createCycle=action('cycle.new','Create review cycle',anyRole('pm'),
   need(!list(ctx.s,'cycle').some(c=>c.status!=='Cancelled'&&(!ctx.actor.company||!c.company||ctx.actor.company===c.company)&&c.start<=v.end&&v.start<=c.end),'A quarterly cycle already covers part of this period.');
   return create(ctx,'cycle',v.title,'Draft',{...v,policy:structuredClone(p),membership:[],goalDue:addWorkdays(v.start,5,p.holidays),qaDue:addWorkdays(v.start,7,p.holidays),baselineDue:addWorkdays(v.start,10,p.holidays)});
 });
-export const cycleActions=[
+export const cycleActions=[...designActions,
   action('cycle.open','Open cycle',(ctx,r)=>r.status==='Draft'&&isRole(ctx.actor,'pm'),noFields,(ctx,r)=>{
     const staff=list(ctx.s,'employee').map(e=>rosterAt(e,r.start)).filter(e=>e.active&&ctx.scope(e)&&e.joinedAt<=r.start);need(staff.length,'Add eligible employees first.');
     for(const e of staff){
       const snapshot={id:e.id,staffId:e.staffId,name:e.title,managerId:e.managerId,department:e.department,company:e.company,businessUnit:e.businessUnit,team:e.team,grade:e.grade,jobTitle:e.jobTitle,peopleManager:e.peopleManager,track:trackAt(ctx.s,e,r.start)};
       r.membership.push(snapshot);
       if(snapshot.track==='A'){
-        const review=create(ctx,'review',e.title+' · '+r.title,'Goal setting',{employeeId:e.id,cycleId:r.id,policyId:r.policyId,snapshot,campaign:{id:crypto.randomUUID(),start:r.start,end:r.end,deadline:r.feedbackDue||r.managerDue,version:r.scoringVersion||'legacy',questions:competencyBank(snapshot.peopleManager).map(([id,label])=>[id,r.policy.labels?.[id]||label]),cadence:r.frequency||'Quarterly'},goals:[],checkIns:[],responses:[],calibrations:[],revisions:[],tasks:[],selfReview:null});
+        const review=create(ctx,'review',e.title+' · '+r.title,'Goal setting',{employeeId:e.id,cycleId:r.id,policyId:r.policyId,snapshot,componentWeights:{...(r.componentWeights??defaultWeights)},campaign:{id:crypto.randomUUID(),start:r.start,end:r.end,deadline:r.feedbackDue||r.managerDue,version:r.scoringVersion||'legacy',questions:questionsFor(r).filter(q=>q.audience==='Everyone'||snapshot.peopleManager).map(q=>[q.id,q.prompt]),cadence:r.frequency||'Quarterly'},goals:[],checkIns:[],responses:[],calibrations:[],revisions:[],tasks:[],selfReview:null});
         notify(ctx,review,e.managerId,'Agree objectives and scorecard',addWorkdays(r.start,5,r.policy.holidays));
       }
     }

@@ -30,3 +30,7 @@ Before replacing a prior standalone installation, stop writers, make a consisten
 Read CHANGELOG.md, docs/pms/phase-upgrade.md and docs/pms/uat-evidence.md. Run test/browser/feedback.py and test/browser/visual.py using Python Playwright and Chromium as configured in .github/workflows/ci.yml. Retain the resulting screenshots and CI evidence with the release ticket.
 
 HR and Performance should reconcile a quarterly appraisal and a sales or confirmation score by hand, validate 360 confidentiality, and record the policy decisions requiring approval. Engineering should test corporate SSO, roster import, notification leases, scanner integration and payroll export; review access logging and backups; check keyboard and screen-reader use; and load-test at the expected headcount. Record owners, results and rollback thresholds before opening a live cycle.
+
+## Manage an appraisal cycle
+
+Open Review management as Performance Management. Select Create or manage review cycles → Create review cycle, or Plan annual schedule for scheduled quarters or half-years. Open the draft cycle. Configure appraisal weights, review the default questions and add, edit or remove questions for the relevant audience before opening the cycle. The 360 score averages each eligible validated observer's mean equally. Download the cycle workbook directly from the cycle or select a period under Review management → Appraisal report.

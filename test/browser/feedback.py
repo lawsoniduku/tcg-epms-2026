@@ -42,6 +42,16 @@ try:
             nav = page.get_by_role('navigation', name='Main navigation')
             nav.get_by_role('link', name=destination, exact=True).click()
             expect(nav.get_by_role('link', name=destination, exact=True)).to_have_class('nav-link active')
+            if user == 'pm':
+                expect(page.get_by_role('heading',name='Review management',exact=True)).to_be_visible()
+                with page.expect_download() as download_info:
+                    page.get_by_role('button',name='Download appraisal report (.xlsx)').click()
+                from zipfile import ZipFile
+                with ZipFile(download_info.value.path()) as book:
+                    assert 'xl/worksheets/sheet4.xml' in book.namelist()
+                    assert 'Score revisions' in book.read('xl/workbook.xml').decode()
+                page.get_by_role('link',name='Create or manage review cycles').click()
+                expect(page.get_by_role('button',name='Create review cycle')).to_be_visible()
             if user == 'employee':
                 expect(nav.get_by_role('link',name='Administration')).to_have_count(0)
                 page.get_by_role('link',name='360 feedback',exact=True).click()

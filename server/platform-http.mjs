@@ -1,3 +1,4 @@
+import {cycleReport} from '../public/workspace/cycle-report.mjs';
 import {previewGoals} from '../public/workspace/goal-import.mjs';
 import {workbook,templateData} from './import-files.mjs';
 import {initialiseEvidence,listEvidence,uploadEvidence,downloadEvidence,scanQueue,scanReceipt} from './evidence.mjs';
@@ -205,6 +206,12 @@ export function platformHttp(store,opts={}){
       if(post&&path==='/api/platform/role'){const b=await authorisedBody();requireThat(grantedRoles.includes(b.role),'Role unavailable.',403);return newSession({...profile,role:b.role},session.auth_method);}
       if(req.method==='GET'&&path==='/api/platform/view'){const result=view(store.readState(),actor,{id:url.searchParams.get('id'),setupYear:Number(url.searchParams.get('year'))});store.audit(actor.id,'view',url.searchParams.get('id')??'overview');return send(200,{...result,csrf:session.csrf});}
       if(post&&path==='/api/platform/command'){const b=await authorisedBody();return send(200,store.command(actor.id,b.requestId,b,s=>execute(s,actor,b)));}
+      if(req.method==='GET'&&path==='/api/platform/cycle-report.xlsx'){
+        const id=url.searchParams.get('id'),sheets=cycleReport(store.readState(),actor,id);
+        const bytes=Buffer.from(await workbook({op:'report',sheets}),'base64');
+        store.audit(actor.id,'export.cycle-appraisals',id);
+        res.writeHead(200,{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="Appraisals-'+id.replace(/[^a-zA-Z0-9-]/g,'')+'.xlsx"'});return res.end(bytes);
+      }
       if(req.method==='GET'&&path==='/api/platform/export'){const report=url.searchParams.get('report');const out=exportData(store.readState(),actor,report,url.searchParams.get('id'),Object.fromEntries(url.searchParams));store.audit(actor.id,'export.'+report);res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="performance-export.csv"'});return res.end(out);}
       if(post&&path==='/api/platform/logout'){db.prepare('DELETE FROM sessions WHERE token=?').run(session.token);return send(200,{ok:true},{'Set-Cookie':'pms_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'});}
       if(path==='/api/platform/accounts'){

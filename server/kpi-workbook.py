@@ -23,11 +23,14 @@ def sheet(rows):
     for index, values in enumerate(rows, 1):
         row = node(data, 'row', r=str(index))
         for col, value in enumerate(values):
-            cell = node(row, 'c', r=chr(65+col)+str(index), t='inlineStr')
-            node(node(cell, 'is'), 't').text = str(value)
+            if value is None: continue
+            numeric=isinstance(value,(int,float)) and not isinstance(value,bool)
+            cell=node(row,'c',r=chr(65+col)+str(index),t='n' if numeric else 'inlineStr')
+            if numeric: node(cell,'v').text=str(value)
+            else: node(node(cell,'is'),'t').text=re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]','',str(value))[:32767]
     return ws
 def build(req):
-    headers, example, objectives = req['headers'], req['example'], req['objectives']
+    headers, example, objectives = req.get('headers',[]), req.get('example',[]), req.get('objectives',[])
     book = root('workbook')
     sheets = node(book, 'sheets')
     relations = root('Relationships', PKG)
@@ -38,14 +41,24 @@ def build(req):
         node(types,'Override',PartName='/'+path,ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.'+kind+'+xml')
     override('xl/workbook.xml','sheet.main')
     parts = {}
-    for idx, (name, rows) in enumerate([
+    for idx, (name, rows) in enumerate(req.get('sheets') or [
         ('KPIs',[headers]), ('Instructions',[['Enter data on the KPIs sheet. Keep the headers.'],['Example row (fictional). Copy and edit the values.'],headers,example,['Use staffId for a team file. Leave blank for the current draft.'],['Weights including existing KPIs must match policy and total 100.']]),
         ('Objectives', [['Objective ID','Approved objective']]+objectives)],1):
         path=f'xl/worksheets/sheet{idx}.xml'
         node(sheets,'sheet',name=name,sheetId=str(idx),**{'{'+REL+'}id':'rId'+str(idx)})
         node(relations,'Relationship',Id='rId'+str(idx),Type=REL+'/worksheet',Target='worksheets/sheet'+str(idx)+'.xml')
         ws=sheet(rows)
-        if idx==1:
+        if req.get('sheets'):
+            views=E.Element('sheetViews')
+            view=node(views,'sheetView',workbookViewId='0')
+            node(view,'pane',ySplit='1',topLeftCell='A2',activePane='bottomLeft',state='frozen')
+            ws.insert(0,views)
+            cols=E.Element('cols')
+            for col,label in enumerate(rows[0],1):
+                node(cols,'col',min=str(col),max=str(col),width=str(max(17,len(label)+3)),customWidth='1')
+            ws.insert(1,cols)
+            node(ws,'autoFilter',ref='A1:'+chr(64+len(rows[0]))+str(len(rows)))
+        elif idx==1:
             validations=node(ws,'dataValidations',count=str(2+bool(objectives)))
             choices={'perspective':'"Financial,Customer,Process,Learning"','direction':'"Higher is better,Lower is better,Approved milestone scale,Binary outcome"'}
             if objectives:
@@ -104,6 +117,6 @@ def parse(req):
     return out.getvalue()
 try:
     req=json.load(sys.stdin)
-    print(json.dumps(build(req) if req['op']=='build' else parse(req)))
+    print(json.dumps(build(req) if req['op'] in ['build','report'] else parse(req)))
 except Exception:
     sys.exit(2)

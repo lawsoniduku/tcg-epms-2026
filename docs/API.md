@@ -30,3 +30,7 @@ Administrators may grant additional roles at provisioning. Supported role codes 
 POST /api/platform/files receives entity, name, base64 and visibility. PDF, PNG, JPEG and text files up to 2 MiB enter encrypted quarantine. GET /api/platform/files?entity=ID returns visible metadata. The scanner uses its own EPMS_SCAN_TOKEN to GET /api/integration/scanner/queue and POST /api/integration/scanner/receipt with id, sha256, result and reference. A Clean receipt enables a scoped attachment download at GET /api/platform/files?download=ID. Rejected or unscanned files remain unavailable. Configure and test the actual scanner before relying on attachments. The hosted fictional workspace uses document references.
 
 Commercial import rows use staff_id, month, actual, quality, execution, breach and source. The source owner names a unique signed extract and supplies an attestation reference, reviews rejected rows, then freezes accepted rows. Finance independently validates them. The recipient verifies source signatures according to TCG's published commercial controls.
+
+### Cycle appraisal workbook
+
+GET `/api/platform/cycle-report.xlsx?id=<cycle-id>` returns a native Excel workbook. PM, executive and auditor roles receive their authorised cycle scope. The summary and appraisal register include outstanding Track A reviews, with blank scores for unassessed stages. KPI detail and historical score revisions are separate sheets. Raw 360 responses and respondent identities are excluded. Downloading records an access audit event.

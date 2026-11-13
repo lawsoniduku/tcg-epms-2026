@@ -127,7 +127,7 @@ export const reviewActions=[
     const bsc=weighted(items.map(g=>g.rating),items.map(g=>g.weight));
     const behaviour=behaviourResult(ctx,r);
     r.assessment={items,bsc,behaviour,summary:v.summary,by:ctx.actor.id,at:ctx.at};
-    r.supervisorScore=cycle(ctx,r).scoringVersion==='4.2'?compositeScore(items,behaviour):trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
+    r.supervisorScore=cycle(ctx,r).scoringVersion==='4.2'?compositeScore(items,behaviour,r.componentWeights):trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
   }),
   action('review.calibrate','Record calibration decision',atStage('Calibration',(ctx,r)=>r.panel?.chair===ctx.actor.id&&!own(ctx.actor,r)),()=>[
     num('score','Calibrated score',1,5),note('reason','Panel rationale'),field('evidence','Evidence reference'),field('members','Panel participants'),yes('consequential','Recognition, promotion, dispute or other consequential decision')
@@ -162,11 +162,10 @@ export function lockReview(ctx,r,v){
   r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,employeeExplanation:v.employeeExplanation||'',revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
 }
 export const responseActions=feedbackActions;
-// Express questionnaire means in sixtieths (1–6 observed questions) and KPI weights in hundredths of a percent.
-function compositeScore(items,behaviour){
+export function compositeScore(items,behaviour,weights={bsc:70,feedback:30}){
   const bscUnits=items.reduce((sum,item)=>sum+Math.round(item.rating*100)*Math.round(item.weight*100),0);
   const denominator=1000000n*BigInt(behaviour.divisor);
-  const numerator=BigInt(bscUnits)*70n*BigInt(behaviour.divisor)+BigInt(behaviour.units)*30n*1000000n;
+  const numerator=BigInt(bscUnits)*BigInt(weights.bsc)*BigInt(behaviour.divisor)+BigInt(behaviour.units)*BigInt(weights.feedback)*1000000n;
   return Number((2n*numerator+denominator)/(2n*denominator))/100;
 }
 export function behaviourResult(ctx,r) {
@@ -178,7 +177,7 @@ export function behaviourResult(ctx,r) {
     return {source:'Documented observation',score:r.observation.score};
   }
   const responses=list(ctx.s,'response').filter(x=>x.reviewId===r.id&&x.status==='Validated');
-  if(c.scoringVersion==='4.2'){
+  {
     const byIdentity=new Map();
     for(const response of responses){
       const user=ctx.s.users.find(u=>u.id===response.rater);
@@ -189,26 +188,26 @@ export function behaviourResult(ctx,r) {
     }
     const valid=[...byIdentity.values()];
     need(valid.filter(a=>a.category!=='Manager').length >= (p.minimumAnonymous||3),'360_DATA_PENDING: more distinct anonymous observers are required.');
-    const units=valid.reduce((sum,a)=>sum+Math.round(a.score*60),0),divisor=60*valid.length;
-    const score=units/divisor;
+    let units=0n,divisor=1n;
+    const gcd=(a,b)=>b?gcd(b,a%b):a;
+    for(const response of valid){
+      const answers=Object.entries(response.answers??{}).filter(([key,value])=>key!=='example'&&value!=='NOT_OBSERVED').map(([,v])=>Number(v));
+      const n=answers.length?BigInt(answers.reduce((sum,v)=>sum+v,0)):BigInt(Math.round(response.score*60));
+      const d=BigInt(answers.length||60);
+      units=units*d+n*divisor;divisor*=d;
+      const common=gcd(units,divisor);units/=common;divisor/=common;
+    }
+    divisor*=BigInt(valid.length);
+    const score=Number(units*1000000000000n/divisor)/1e12;
     const competencies=[];
-    for(const [key,label] of r.campaign.questions || []){
+    for(const [key,label] of r.campaign?.questions || []){
       const observed=valid.filter(response=>response.answers?.[key] && response.answers[key]!=='NOT_OBSERVED');
       if(observed.filter(response=>response.category!=='Manager').length >= (p.minimumAnonymous||3)){
         competencies.push({competency:label,score:average(observed.map(a=>Number(a.answers[key])))});
       }
     }
-    return {source:'360 feedback',score,units,divisor,competencies,method:'Equal individual raters',campaign:r.campaign.id,periodStart:c.start,periodEnd:c.end};
+    return {source:'360 feedback',score,units:String(units),divisor:String(divisor),competencies,method:'Equal individual raters',campaign:r.campaign?.id,periodStart:c.start,periodEnd:c.end};
   }
-  const weights=r.snapshot.peopleManager?{'Manager':40,'Peer':20,'Direct report':30,'Stakeholder':10}:{Manager:50,Peer:30,Stakeholder:20};
-  const groups=[];let total=0,weighted=0;
-  for(const [category,weight] of Object.entries(weights)){
-    const entries=responses.filter(e=>e.category===category);
-    const valid=entries.length>=(['Peer','Direct report'].includes(category)?3:1);
-    if(!valid){need(category!=='Manager'&&p.fallback==='Redistribute across valid observer categories','More valid responses are required before scoring.');continue;}
-    const score=average(entries.map(e=>e.score));total+=weight;weighted+=score*weight;groups.push({category,score});
-  }
-  need(total>0,'Valid observer evidence is required.');
-  return {source:'360 feedback',score:round(weighted/total),groups};
+
 }
 

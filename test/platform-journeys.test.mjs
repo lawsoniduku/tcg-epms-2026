@@ -273,3 +273,20 @@ test('KPI import preview validates manual fields and policy totals without chang
  execute(s,manager,command);assert.equal(draft.status,'Goal setting');assert.equal(draft.goals.length,goals.length);
  assert.equal(s.records.filter(r=>r.type==='goalBatch').length,1);
 });
+
+test('PM configures a draft cycle, freezes custom questions and weights at launch, and exports only its cohort',async()=>{
+ const j=journey(false),p=list(j.s,'policy')[0],c=j.act('pm','cycle','cycle.new',{title:'Example Q1',start:'2097-01-01',end:'2097-03-31',policyId:p.id});
+ assert.throws(()=>j.doIt('manager',c,'weights',{bsc:60,feedback:40}),/role/);
+ assert.throws(()=>j.doIt('pm',c,'weights',{bsc:60,feedback:50}),/100/);
+ j.doIt('pm',c,'weights',{bsc:60,feedback:40});
+ j.doIt('pm',c,'addQuestion',{prompt:'How consistently does this colleague share progress?',audience:'Everyone'});
+ j.doIt('pm',c,'open');const r=list(j.s,'review').find(x=>x.cycleId===c.id);
+ assert.deepEqual(r.componentWeights,{bsc:60,feedback:40});assert.ok(r.campaign.questions.some(q=>q[1].includes('share progress')));
+ assert.throws(()=>j.doIt('pm',c,'weights',{bsc:50,feedback:50}),/stage/);
+ const {cycleReport}=await import('../public/workspace/cycle-report.mjs');
+ const sheets=cycleReport(j.s,j.user('pm'),c.id);
+ assert.equal(sheets[1][1].length,c.membership.filter(e=>e.track==='A').length+1);
+ assert.throws(()=>cycleReport(j.s,j.user('employee'),c.id),/authority/);
+ const {compositeScore}=await import('../public/workspace/quarterly.mjs');
+ assert.equal(compositeScore([{rating:5,weight:100}],{units:2,divisor:1},r.componentWeights),3.8);
+});
