@@ -12,9 +12,9 @@ The standalone service accepts JSON at `/api/platform`. All application writes r
 | Users | GET or POST /api/platform/accounts | Live administrator creates and deactivates users. Link a staff record by employeeId. Supply password or trusted SSO subject |
 | Session | POST /api/platform/password, POST /api/platform/logout | Change password and invalidate sessions, or revoke the current session |
 | Roster inbound | POST /api/integration/roster | Scoped bearer secret. JSON contains requestId and CSV. Atomic batch processing rejects unknown managers, duplicate staff IDs and invalid fields |
-| Notification delivery | GET /api/integration/outbox | Notification-consumer bearer secret. Up to 100 pending messages with stable IDs, recipients, message and due date |
-| Delivery receipt | POST /api/integration/outbox/ack | Supply id and delivered boolean. Deduplicate by message ID at the receiving provider. Undelivered messages remain available |
-| Report export | GET /api/platform/export?report=completion or scores | Scoped CSV. The score register preserves all revisions and marks the current version |
+| Notification delivery | GET /api/integration/outbox | Notification-consumer bearer secret. Claims up to 100 due messages for two minutes. Persist the message ID for provider deduplication and use the returned leaseId for acknowledgement |
+| Delivery receipt | POST /api/integration/outbox/ack | Supply id, leaseId and a delivered boolean. A superseded lease returns 409. A negative acknowledgement schedules exponential backoff up to one hour. Ten acknowledged delivery attempts ending in failure mark the message failed. An expired unacknowledged lease becomes eligible for collection again |
+| Report export | GET /api/platform/export?report=completion or scores | Applies the selected report filters within the signed-in actor’s authorised scope. Unsupported report names are rejected. The score register preserves all revisions and marks the current version |
 | Payroll instructions | GET /api/platform/export?report=payroll&id=... | Finance-only download of the approved batch. Includes employee ID, annual NGN amount, effective date, decision authority and export ID |
 
 The SSO integration is an assertion bridge. TCG's gateway handles IdP discovery, browser redirects, authentication, MFA and token exchange. It must deliver the assertion through the documented POST flow, establish the returned cookie on the PMS origin and redirect the browser into the application. The PMS never accepts a caller-supplied role from this endpoint.

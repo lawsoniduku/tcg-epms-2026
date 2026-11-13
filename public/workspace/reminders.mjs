@@ -13,7 +13,7 @@ function send(ctx,r,recipient,message,date,key) {
   return 1;
 }
 
-export function reviewNotices(ctx,r,cycle,today) {
+export function reviewNotices(ctx,r,cycle,today,previousDay=today) {
   const manager=r.actingReviewer || r.snapshot.managerId;
   const employee=ctx.s.users.find(u=>u.active!==false && u.employeeId===r.employeeId)?.id;
   const schedule={
@@ -27,7 +27,8 @@ export function reviewNotices(ctx,r,cycle,today) {
   const holidays=cycle.policy.holidays;
   const prefix=[r.id,r.status,date].join(':');
   for(const offset of [-7,-3,-1]){
-    if(today===addWorkdays(date,offset,holidays)){
+    const due=addWorkdays(date,offset,holidays);
+    if(today<=date&&due<=today&&(due>previousDay||due===today)){
       count+=send(ctx,r,owner,r.status+' due '+date,date,prefix+':reminder:'+offset);
     }
   }

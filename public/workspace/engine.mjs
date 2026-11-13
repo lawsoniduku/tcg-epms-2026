@@ -74,6 +74,7 @@ export function execute(s,actor,command,at){
   s.revision++;
   return {id:result.id,type:result.type,status:result.status,version:result.version};
 }
+import {canAttach,confidentialRead,indexedProjection} from './model.mjs';
 const hidden=new Set(['id','type','title','version','createdBy','createdAt','updatedAt','status','employeeId','company','snapshot','history','author','policy','rater','answers']);
 function displayRecord(ctx,r){
   if(r.type==='response'){
@@ -82,7 +83,7 @@ function displayRecord(ctx,r){
     if(['Nomination','HR validation'].includes(r.status)&&(isRole(ctx.actor,'pm')||ctx.actor.role==='manager')){safe.nominee=ctx.s.users.find(u=>u.id===r.rater)?.name;safe.exposure=r.exposure;
       const load=list(ctx.s,'response').filter(a=>a.rater===r.rater&&outstanding(a)&&ctx.scope(a)).length;
       safe.assignmentLoad=load;safe.workloadWarning=load>(r.observerLoad || (r.cycleId && get(ctx.s,r.cycleId).policy.observerLoad)||10)?'Review observer workload before invitation':undefined;}
-    if(isRole(ctx.actor,'pm')&&r.feedbackAdmins?.includes(ctx.actor.id)&&r.inspection?.actor===ctx.actor.id && Date.parse(ctx.at)>=Date.parse(r.inspection.at) && Date.parse(ctx.at)-Date.parse(r.inspection.at)<300000){
+    if(confidentialRead(ctx.actor,r,ctx.at)){
       safe.example=r.answers?.example;safe.score=r.score;
     }
     return safe;
@@ -111,6 +112,7 @@ function displayRecord(ctx,r){
 }
 function permittedRecords(ctx,type){return list(ctx.s,type).filter(r=>ctx.scope(r));}
 export function view(s,actor,selection={}) {
+  s=indexedProjection(s);
   const ctx=context(s,actor);
   const available={};const rows={};
   for(const [type,defs] of Object.entries(catalogue)){
@@ -123,15 +125,15 @@ export function view(s,actor,selection={}) {
   if(selection.id){
     const r=s.records.find(r=>r.id===selection.id);
     requireThat(r&&ctx.scope(r),'Record unavailable in your scope.',404);
-    detail={id:r.id,type:r.type,title:r.title,status:r.status,version:r.version,data:displayRecord(ctx,r),actions:catalogue[r.type].actions.filter(d=>allowed(ctx,r,d)).map(d=>form(ctx,r,d))};
-    detail.related=r.type==='employee'?Object.entries(rows).flatMap(([kind,entries])=>entries.filter(entry=>s.records.find(x=>x.id===entry.id)?.employeeId===r.id).map(entry=>({...entry,type:kind}))):[];
+    detail={canAttach:canAttach(s,actor,r),id:r.id,type:r.type,title:r.title,status:r.status,version:r.version,data:displayRecord(ctx,r),actions:catalogue[r.type].actions.filter(d=>allowed(ctx,r,d)).map(d=>form(ctx,r,d))};
+    detail.related=r.type==='employee'?Object.entries(rows).flatMap(([kind,entries])=>entries.filter(entry=>s.byId.get(entry.id)?.employeeId===r.id).map(entry=>({...entry,type:kind}))):[];
     detail.history=s.events.filter(e=>e.record===r.id&&r.type!=='response'&&(!own(actor,r)||r.type!=='review'||!['review.calibrate','review.moderate','review.lock','review.assess'].includes(e.action))).slice(-40).reverse().map(e=>({action:e.action,at:e.at,actor:e.actorName,from:e.from,to:e.to}));
   }
   if(detail?.type==='review'&&detail.data.selfReview){
     const r=get(s,detail.id);const submitted=r.selfReview;
     detail.data.selfReview={items:r.goals.map(g=>({title:g.title,rating:submitted['score_'+g.id],evidence:submitted['note_'+g.id]})),development:submitted.development,at:submitted.at};
   }
-  const audit=isRole(actor,'pm','auditor','executive')?s.events.filter(e=>s.records.some(r=>r.id===e.record&&ctx.scope(r))&&e.type!=='response'&&(!['merit','capability'].includes(e.type)||isRole(actor,'executive'))).slice(-300).reverse().map(e=>({at:e.at,action:e.action,actor:e.actorName,from:e.from,to:e.to})):null;
+  const audit=isRole(actor,'pm','auditor','executive')?s.events.filter(e=>s.byId.has(e.record)&&ctx.scope(s.byId.get(e.record))&&e.type!=='response'&&(!['merit','capability'].includes(e.type)||isRole(actor,'executive'))).slice(-300).reverse().map(e=>({at:e.at,action:e.action,actor:e.actorName,from:e.from,to:e.to})):null;
   const notices=s.outbox.filter(n=>n.recipient===actor.id).slice(-50).reverse();
   const labels=Object.fromEntries(Object.entries(sections).filter(([k])=>Object.hasOwn(catalogue,k)));
   const aggregates={ratingBands:[0,0,0,0,0],outstanding:{},development:0};
@@ -142,13 +144,15 @@ export function view(s,actor,selection={}) {
   }
   return {trends:isRole(actor,'pm','hod','finance','executive','er','auditor')?outcomeTrends(ctx):[],operations:isRole(actor,'pm','hod','manager','executive','auditor')?operationsRows(ctx):[],aggregates,actor:{id:actor.id,name:actor.name,role:actor.role,grantedRoles:actor.grantedRoles??[actor.role],department:actor.department},roles,sections:labels,rows,available,detail,audit,notices,revision:s.revision};
 }
-function personName(s,r){return r.type==='employee'?r.title:s.records.find(e=>e.id===r.employeeId)?.title??'';}
-export function processDeadlines(s,at=new Date().toISOString()){
+function personName(s,r){return r.type==='employee'?r.title:(s.byId?s.byId.get(r.employeeId):s.records.find(e=>e.id===r.employeeId))?.title??'';}
+import {trackAt} from './governance.mjs';
+export function processDeadlines(s,at=new Date().toISOString(),previousDay=isoDay(at)){
   const today=isoDay(at);const actor={id:'scheduler',name:'Cycle scheduler',role:'pm'};const ctx=context(s,actor,at);let count=0;
   for(const employee of list(s,'employee')){
     const snapshot=rosterAt(employee,today);
-    if((employee.assignments||[]).length && ['active','confirmed','commercial','peopleManager','managerId','department','company','grade','team','businessUnit','title','email','jobTitle'].some(k=>employee[k]!==snapshot[k])){
-      Object.assign(employee,snapshot);
+    const currentTrack=trackAt(s,employee,today);
+    if(employee.track!==currentTrack || (employee.assignments||[]).length && ['active','confirmed','commercial','peopleManager','managerId','department','company','grade','team','businessUnit','title','email','jobTitle'].some(k=>employee[k]!==snapshot[k])){
+      Object.assign(employee,snapshot,{track:currentTrack});
       employee.status=employee.active?'Active':'Inactive';
       journal(ctx,employee,'roster.effective');count++;
     }
@@ -159,7 +163,8 @@ export function processDeadlines(s,at=new Date().toISOString()){
       const holidays=r.cycleId?get(s,r.cycleId).policy.holidays:[];
       for(const lead of [7,3,1]){
         const key='feedback-reminder:'+r.id+':'+lead+':'+due;
-        if(today===addWorkdays(due,-lead,holidays)&&!s.outbox.some(n=>n.key===key)){
+        const reminder=addWorkdays(due,-lead,holidays);
+        if(today<=due&&reminder<=today&&(reminder>previousDay||reminder===today)&&!s.outbox.some(n=>n.key===key)){
           notify(ctx,r,r.rater,'Confidential questionnaire due '+due,due);
           s.outbox.at(-1).key=key;count++;
         }
@@ -176,7 +181,7 @@ export function processDeadlines(s,at=new Date().toISOString()){
     const c=get(s,r.cycleId,'cycle');
     if(r.status==='In progress'&&today>=addWorkdays(c.end,-4,c.policy.holidays)){r.status='Self-review';journal(ctx,r,'deadline.openSelf',{from:'In progress',to:r.status});count++;}
     if(r.status==='Self-review'&&today>c.selfDue){r.selfBypass=at;r.status='Manager assessment';journal(ctx,r,'deadline.advance',{from:'Self-review',to:r.status});count++;}
-    count+=reviewNotices(ctx,r,c,today);
+    count+=reviewNotices(ctx,r,c,today,previousDay);
   }
   for(const r of list(s,'probation').filter(r=>r.status!=='Closed')){
     count+=probationEscalation(ctx,r,today);
@@ -188,7 +193,9 @@ export function processDeadlines(s,at=new Date().toISOString()){
   }
   if(count)s.revision++;return count;
 }
-export function exportData(s,actor,report,id){
+export function exportData(s,actor,report,id,filters={}){
+  requireThat(['completion','scores','payroll','trends'].includes(report),'Unknown report.',400);
+  const matches=row=>['cycle','frequency','company','department','manager'].every(k=>!filters[k]||row[k]===filters[k]);
   const ctx=context(s,actor);const rows=[];
   if(report==='payroll'){
     requireThat(actor.role==='finance','Finance export authority is required.',403);const r=get(s,id,'merit');
@@ -199,10 +206,11 @@ export function exportData(s,actor,report,id){
     rows.push(...outcomeTrends(ctx));
   }else if(report==='scores'){
     requireThat(isRole(actor,'pm','executive','auditor'),'Score reporting authority is required.',403);
-    for(const r of permittedRecords(ctx,'review'))for(const v of r.revisions)rows.push({staff_id:r.snapshot.staffId,employee:r.snapshot.name,cycle:get(s,r.cycleId).title,revision:v.revision,supervisor:v.supervisor,calibrated:v.calibrated,deduction:v.deductionPoints,final:v.finalScore,rating:v.finalRating,reason:v.reason,by:v.by,at:v.at,status:r.status,current:r.revisions.at(-1)===v&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status)});
+    const members=new Set(operationsRows(ctx).filter(matches).map(row=>row.review_id));
+    for(const r of permittedRecords(ctx,'review').filter(r=>members.has(r.id)))for(const v of r.revisions)rows.push({staff_id:r.snapshot.staffId,employee:r.snapshot.name,cycle:get(s,r.cycleId).title,revision:v.revision,supervisor:v.supervisor,calibrated:v.calibrated,deduction:v.deductionPoints,final:v.finalScore,rating:v.finalRating,reason:v.reason,by:v.by,at:v.at,status:r.status,current:r.revisions.at(-1)===v&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status)});
   }else{
     requireThat(isRole(actor,'pm','hod','manager','executive','auditor'),'Management reporting authority is required.',403);
-    rows.push(...operationsRows(ctx));
+    rows.push(...operationsRows(ctx).filter(matches));
   }
   for(const row of rows)Object.assign(row,{exported_by:actor.id,exported_at:ctx.at});
   const headers=Object.keys(rows[0]??{status:''});const esc=x=>'"'+String(x??'').replace(/^\s*[=+@\-]/,"'$&").replaceAll('"','""')+'"';

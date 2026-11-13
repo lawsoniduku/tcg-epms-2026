@@ -14,6 +14,10 @@ function windowLastDate(r){
   end.setUTCDate(end.getUTCDate()-1);
   return end.toISOString().slice(0,10);
 }
+function payrollAtWindowClose(s,employeeId,window){
+  const cutoff=windowLastDate(window);
+  return list(s,'payBasis').filter(p=>p.employeeId===employeeId&&p.effective<=cutoff).sort((a,b)=>b.effective.localeCompare(a.effective))[0];
+}
 function eligibleHistory(s,employee,r){
   const cEnd=addMonths(r.start,r.frequency==='Annual'?12:6);
   const months=r.frequency==='Annual'?12:6;
@@ -34,7 +38,8 @@ function eligibleHistory(s,employee,r){
 function fresh(s,r){
   for(const line of r.lines){
     const e=get(s,line.employeeId,'employee');need(e.active,'An employee is inactive. Remodel the proposal.');
-    const payroll=list(s,'payBasis').filter(p=>p.employeeId===e.id).sort((a,b)=>b.effective.localeCompare(a.effective))[0];
+    const payroll=payrollAtWindowClose(s,e.id,r);
+    if(s.liveCalendar||line.payBasisId)need(payroll,'Rebuild the proposal using the certified window-end salary.');
     if(payroll)need(line.payBasisId===payroll.id&&payroll.annualKobo===line.salaryKobo,'Payroll basis changed. Return to modelling and replace the proposal.');
     const history=eligibleHistory(s,e,r);need(JSON.stringify(history)===JSON.stringify(line.history),'A source result changed. Rebuild the affected merit line.');
     need(history.at(-1).score>=2.75,'Latest rating requires an eligibility review.');
@@ -61,11 +66,11 @@ export const meritActions=[
     num('position','Approved pay-position factor',0,5,{default:1}),field('paySource','Pay and grade/range reference'),note('eligibility','Eligibility, risk and equity assessment')
   ],(ctx,r,v)=>{
     const e=get(ctx.s,v.employeeId,'employee'),history=eligibleHistory(ctx.s,e,r);const index=average(history.map(h=>h.score)),rating=ratingFor(index),factor=rating>=3?r['factor'+rating]:0;
-    const payroll=list(ctx.s,'payBasis').filter(p=>p.employeeId===e.id).sort((a,b)=>b.effective.localeCompare(a.effective))[0];
+    const payroll=payrollAtWindowClose(ctx.s,e.id,r);
     if(ctx.s.liveCalendar)need(payroll,'Register a certified payroll snapshot for this employee.');
     if(payroll)need(payroll.annualKobo===hundredths(v.salary),'Use the certified annual pay from the most recent payroll snapshot.');
     const salaryKobo=hundredths(v.salary),proposed=moneyProduct(salaryKobo,r.reference,factor,v.position,r.cap);
-    r.lines=r.lines.filter(l=>l.employeeId!==e.id);r.lines.push({...v,name:e.title,staffId:e.staffId,payBasisId:payroll?.id??null,index,rating,history,salaryKobo,proposedKobo:proposed});return r;
+    r.lines=r.lines.filter(l=>l.employeeId!==e.id);r.lines.push({...v,name:e.title,staffId:e.staffId,payBasisId:payroll?.id??null,payBasisEffective:payroll?.effective??null,index,rating,history,salaryKobo,proposedKobo:proposed});return r;
   }),
   action('merit.remove','Remove proposal',byRole('Modelling','finance'),(ctx,r)=>[pick('employeeId','Employee proposal',r.lines.map(x=>({value:x.employeeId,label:x.name})))],(ctx,r,v)=>{r.lines=r.lines.filter(x=>x.employeeId!==v.employeeId);return r;}),
   action('merit.submit','Submit affordability model',byRole('Modelling','finance'),()=>[yes('normalise','Approve uniform scaling if over budget'),note('budget','Finance affordability review')],(ctx,r,v)=>{
@@ -78,7 +83,7 @@ export const meritActions=[
   }),
   action('merit.equity','Complete HR equity review',byRole('HR equity review','pm'),()=>[note('findings','Equity, eligibility and exceptions'),pick('decision','Disposition',['Approve for executive review','Return to Finance'])],(ctx,r,v)=>{need(ctx.actor.id!==r.financeReview.by,'Independent HR equity review is required.');r.equity={...v,by:ctx.actor.id};r.status=v.decision==='Return to Finance'?'Modelling':'Executive approval';return r;}),
   action('merit.authorise','Authorise merit proposals',byRole('Executive approval','executive'),()=>[field('authority','Delegated approval reference'),field('effective','Payroll effective date','date'),pick('decision','Decision',['Approve','Return to Finance'])],(ctx,r,v)=>{need(![r.equity?.by,r.financeReview?.by].includes(ctx.actor.id),'Executive approval requires an independent signer.');fresh(ctx.s,r);r.authorisation={...v,by:ctx.actor.id,at:ctx.at};r.status=v.decision==='Approve'?'Export ready':'Modelling';return r;}),
-  action('merit.export','Prepare approved payroll export',(ctx,r)=>r.status==='Export ready'&&ctx.actor.role==='finance'&&r.financeReview.by!==ctx.actor.id,()=>[field('reference','Finance export authorisation')],(ctx,r,v)=>{fresh(ctx.s,r);r.export={...v,id:crypto.randomUUID(),at:ctx.at,by:ctx.actor.id};r.status='Exported';return r;}),
+  action('merit.export','Prepare approved payroll export',(ctx,r)=>r.status==='Export ready'&&ctx.actor.role==='finance'&&!r.lines.some(l=>ctx.actor.employeeId&&l.employeeId===ctx.actor.employeeId)&&![r.financeReview.by,r.equity?.by,r.authorisation?.by].includes(ctx.actor.id),()=>[field('reference','Finance export authorisation')],(ctx,r,v)=>{fresh(ctx.s,r);r.export={...v,id:crypto.randomUUID(),at:ctx.at,by:ctx.actor.id};r.status='Exported';return r;}),
   action('merit.ack','Record payroll reconciliation',byRole('Exported','finance'),()=>[field('reference','Payroll acknowledgement reference'),num('cost','Acknowledged annual award total (NGN)',0,1e12)],(ctx,r,v)=>{need(hundredths(v.cost)===r.costKobo,'Payroll acknowledgement does not reconcile to the approved amount.');r.payrollAck=v;r.status='Reconciled';return r;})
 ];
 export const previewDeductions=action('batch.preview','Preview deduction CSV',anyRole('pm'),()=>[

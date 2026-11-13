@@ -1,5 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
-import {createCipheriv,createDecipheriv,randomBytes,randomUUID,scryptSync,timingSafeEqual,createHash} from 'node:crypto';
+import {createCipheriv,createDecipheriv,randomBytes,randomUUID,scrypt,scryptSync,timingSafeEqual,createHash} from 'node:crypto';
 import {mkdirSync,chmodSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {emptyState,need,roles} from '../public/workspace/model.mjs';
@@ -10,9 +10,11 @@ export function passwordHash(password){
   need(typeof password==='string'&&password.length>=12&&password.length<=256,'Use a password between 12 and 256 characters.');
   const salt=randomBytes(16).toString('hex');return salt+':'+scryptSync(password,salt,64).toString('hex');
 }
-export function matches(password,hash){
+import {promisify} from 'node:util';
+const derive=promisify(scrypt);
+export async function matches(password,hash){
   if(typeof password!=='string'||password.length>256||!hash)return false;
-  const [salt,expected]=hash.split(':');return timingSafeEqual(scryptSync(password,salt,64),Buffer.from(expected,'hex'));
+  const [salt,expected]=hash.split(':');return timingSafeEqual(await derive(password,salt,64),Buffer.from(expected,'hex'));
 }
 export function openPlatform(filename,{demo=false,key}={}){
   const cipherKey=Buffer.isBuffer(key)?key:Buffer.from(key??'','base64');
@@ -44,9 +46,23 @@ export function openPlatform(filename,{demo=false,key}={}){
   const setting=k=>db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
   const set=(k,v)=>db.prepare('INSERT OR REPLACE INTO settings VALUES(?,?)').run(k,String(v));
   const transaction=fn=>{db.exec('BEGIN IMMEDIATE');try{const result=fn();db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}};
+  let cached,cacheKey;
+  function readState(){
+    const stamp=[setting('revision'),db.prepare('PRAGMA data_version').get().data_version].join('/');
+    if(!cached||stamp!==cacheKey){cached=load();cacheKey=stamp;}
+    return cached;
+  }
+  function invalidate(){cached=null;}
+  function entity(id){const row=db.prepare('SELECT payload FROM entities WHERE id=?').get(id);return row?open(row.payload):null;}
   function write(s,before){
+    invalidate();
     for(const r of s.records){
       if(before.versions.get(r.id)===r.version)continue;
+      if(r.type==='employee'&&r.active===false){
+        for(const user of s.users.filter(u=>u.employeeId===r.id)){
+          db.prepare('DELETE FROM sessions WHERE actor=?').run(user.id);
+        }
+      }
       const payload=seal(r);db.prepare('INSERT INTO entities VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,payload=excluded.payload').run(r.id,r.type,r.version,payload);
       db.prepare('INSERT INTO snapshots(entity,version,payload) VALUES(?,?,?)').run(r.id,r.version,payload);
     }
@@ -55,6 +71,7 @@ export function openPlatform(filename,{demo=false,key}={}){
     set('revision',s.revision);
   }
   function account(profile,{password,subject}={}){
+    invalidate();
     need(Object.hasOwn(roles,profile.role)&&profile.id&&profile.name,'A valid user, name and role are required.');
     const email=String(profile.email??'').trim().toLowerCase();need(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),'A valid email address is required.');
     const passwordValue=password?passwordHash(password):null;
@@ -71,7 +88,20 @@ export function openPlatform(filename,{demo=false,key}={}){
   function load(){
     return {schema:2,liveCalendar:!demo,revision:Number(setting('revision')),users:profiles(),records:db.prepare('SELECT payload FROM entities ORDER BY rowid').all().map(x=>open(x.payload)),events:db.prepare('SELECT payload FROM events ORDER BY sequence').all().map(x=>open(x.payload)),outbox:db.prepare('SELECT payload FROM messages ORDER BY rowid').all().map(x=>open(x.payload))};
   }
-  function change(fn){return transaction(()=>{const s=load(),before={versions:new Map(s.records.map(r=>[r.id,r.version])),count:s.events.length,messages:new Map(s.outbox.map(m=>[m.id,JSON.stringify(m)]))};const result=fn(s);write(s,before);return result;});}
+  function change(fn){
+    let committed;
+    const result=transaction(()=>{
+      const s=structuredClone(readState());
+      const before={versions:new Map(s.records.map(r=>[r.id,r.version])),count:s.events.length,messages:new Map(s.outbox.map(m=>[m.id,JSON.stringify(m)]))};
+      const value=fn(s);
+      write(s,before);
+      committed=s;
+      cacheKey=[s.revision,db.prepare('PRAGMA data_version').get().data_version].join('/');
+      return value;
+    });
+    cached=committed;
+    return result;
+  }
   function command(actor,requestId,payload,fn){
     need(typeof requestId==='string'&&/^[a-zA-Z0-9-]{8,80}$/.test(requestId),'A valid idempotency key is required.');
     const fingerprint=digest(JSON.stringify(payload));
@@ -79,7 +109,14 @@ export function openPlatform(filename,{demo=false,key}={}){
       if(prior){need(prior.actor===actor&&prior.fingerprint===fingerprint,'Idempotency key was used for another command.');return open(prior.result);}
       const result=fn(s);db.prepare('INSERT INTO requests VALUES(?,?,?,?)').run(requestId,actor,fingerprint,seal(result));return result;});
   }
-  return {db,load,change,command,transaction,account,profiles,open,seal,
+  function deadlines(process){
+    const at=new Date().toISOString();
+    const day=new Date(Date.now()+3600000).toISOString().slice(0,10);
+    const last=setting('deadlineDay'),previousRevision=setting('deadlineRevision');
+    if(last===day && previousRevision===setting('revision'))return;
+    change(s=>{process(s,at,last??day);set('deadlineDay',day);set('deadlineRevision',s.revision);});
+  }
+  return {deadlines,db,load,readState,invalidate,entity,change,command,transaction,account,profiles,open,seal,
     audit(actor,operation,entity=''){db.prepare('INSERT INTO access_log(at,actor,operation,entity) VALUES(?,?,?,?)').run(new Date().toISOString(),actor,operation,entity);},
     session(actor,role){const token=randomBytes(32).toString('hex'),csrf=randomBytes(24).toString('hex');db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());db.prepare('INSERT INTO sessions(token,actor,csrf,expires,active_role) VALUES(?,?,?,?,?)').run(digest(token),actor,csrf,Date.now()+8*3600000,role??null);return {token,csrf};},
     close(){db.close();}

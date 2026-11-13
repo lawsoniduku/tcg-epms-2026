@@ -1,4 +1,6 @@
 import {action,choices,create,field,get,isoDay,isRole,journal,list,need,note,num,pick} from './model.mjs';
+import {trackAt} from './governance.mjs';
+import {rosterAt} from './roster.mjs';
 import {createCycle} from './organisation.mjs';
 
 function periods(year,frequency) {
@@ -24,7 +26,7 @@ export const newCadence=action('cadence.new','Preview formal review schedule',ct
   need(!ctx.s.liveCalendar||plan[0].start>isoDay(ctx.at),'Select a prospective review year.');
   need(policy.effective<=plan[0].start,'Policy must be effective by the first review.');
   need(prior.every(c=>c.status==='Draft'),'REVIEW_CYCLE_LOCKED: this year contains launched reviews.');
-  const eligible=list(ctx.s,'employee').filter(e=>ctx.scope(e)&&e.active&&e.track==='A').length;
+  const eligible=list(ctx.s,'employee').map(e=>rosterAt(e,plan[0].start)).filter(e=>ctx.scope(e)&&e.active&&trackAt(ctx.s,e,plan[0].start)==='A').length;
   return createSchedule(ctx,v,plan,prior,eligible,policy);
 });
 function createSchedule(ctx,v,plan,prior,eligible,policy){

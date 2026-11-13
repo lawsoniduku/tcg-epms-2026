@@ -26,9 +26,17 @@ export const appealActions=[
   action('appeal.communicate','Record communication and close',role('pm','Communicate decision'),()=>[field('reference','Written outcome reference')],(ctx,r,v)=>{
     r.communication=v.reference;r.status='Closed';if(r.finding.outcome==='Return for reassessment'){
       const t=get(ctx.s,r.reviewId);t.appealRemedy=r.finding.reason;
-      if(t.type==='review'){const c=get(ctx.s,t.cycleId);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{appeal:r.id});}t.status='Calibration';t.panel=null;t.releasedAt=null;t.ack=null;t.conversation=null;}
+      if(t.type==='review'){const c=get(ctx.s,t.cycleId);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{appeal:r.id});}t.status='Calibration';t.panel=null;t.calibratedScore=null;t.cohortCalibration=null;t.feedbackReviewed=null;t.feedbackThemes=null;t.moderation=null;t.releasedAt=null;t.ack=null;t.conversation=null;}
       else if(t.type==='commercial'){t.priorResults??=[];t.priorResults.push(t.result);t.status='Active';t.releasedAt=null;}
-      else if(t.type==='probation')t.status='Final assessment';
+      else if(t.type==='probation'){
+        t.status='Final assessment';
+        const employee=get(ctx.s,t.employeeId,'employee');
+        if(employee.confirmedFrom && employee.confirmedFrom===t.decisions?.at(-1)?.effective){
+          employee.confirmedFrom=null;
+          employee.track=trackAt(ctx.s,employee,isoDay(ctx.at));
+          journal(ctx,employee,'confirmation.reassessment',{appeal:r.id});
+        }
+      }
       else t.status='Hearing';
       journal(ctx,t,'appeal.reassessment',{appealId:r.id});
     }return r;

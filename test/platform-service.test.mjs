@@ -74,3 +74,44 @@ test('multi-role accounts switch only between granted roles and keep one actor i
  const switchRole=await f.post('role',{role:'hod'},session);assert.equal(switchRole.status,200);const cookie=switchRole.headers.get('set-cookie').split(';')[0];
  const v=await (await fetch(f.base+'/api/platform/view',{headers:{cookie}})).json();assert.equal(v.actor.role,'hod');assert.equal(v.actor.id,'dual');
 });
+
+test('delegated administrators only see and manage accounts and links in their company',async t=>{
+ const f=await fixture(t);
+ for(const company of ['A','B'])f.store.account({id:company,name:company,email:company+'@example.invalid',company,role:'admin'},{password:pwd});
+ const a=await f.login({email:'A@example.invalid',password:pwd});
+ const response=await fetch(f.base+'/api/platform/accounts',{headers:{cookie:a.cookie}});
+ assert.deepEqual((await response.json()).users.map(u=>u.id),['A']);
+ assert.equal((await f.post('accounts',{disable:'B'},a)).status,403);
+ f.store.change(s=>s.records.push({id:'staffB',type:'employee',company:'B',title:'Example B',active:true,version:1}));
+ assert.equal((await f.post('accounts',{name:'New user',email:'new@example.invalid',role:'employee',company:'A',employeeId:'staffB',password:pwd},a)).status,422);
+});
+test('archived employees lose existing sessions and cannot sign in again',async t=>{
+ const f=await fixture(t,{demo:true}),pm=await f.login({userId:'pm'}),employee=await f.login({userId:'employee'});
+ const id=f.store.profiles().find(u=>u.id==='employee').employeeId,record=f.store.entity(id);
+ const result=await f.post('command',{type:'employee',id,action:'employee.archive',version:record.version,values:{reason:'Test leaver'},requestId:randomUUID()},pm);
+ assert.equal(result.status,200);
+ assert.equal((await fetch(f.base+'/api/platform/view',{headers:{cookie:employee.cookie}})).status,401);
+ assert.equal((await f.post('login',{userId:'employee'})).status,401);
+});
+test('outbox claims are exclusive and require the active delivery receipt',async t=>{
+ const f=await fixture(t,{demo:true,opts:{noticeToken:'consumer'}});
+ const url=f.base+'/api/integration/outbox',headers={authorization:'Bearer consumer','content-type':'application/json'};
+ const get=async()=>(await (await fetch(url,{headers})).json()).messages;
+ const first=await get();assert.ok(first.length);assert.equal((await get()).length,0);
+ const m=first[0],ack=leaseId=>fetch(url+'/ack',{method:'POST',headers,body:JSON.stringify({id:m.id,leaseId,delivered:true})});
+ assert.equal((await ack('expired')).status,409);assert.ok((await ack(m.leaseId)).ok);
+ assert.ok((await ack(m.leaseId)).ok);
+});
+test('file uploads replay safely and confidential attachments follow purpose-bound access',async t=>{
+ const f=await fixture(t,{demo:true}),observer=await f.login({userId:'observer1'}),pm=await f.login({userId:'pm'});
+ f.store.change(s=>s.records.push({id:'response-file',type:'response',status:'Invited',version:1,rater:'observer1',feedbackAdmins:['pm'],employeeId:s.users.find(u=>u.id==='employee').employeeId}));
+ const payload={requestId:randomUUID(),entity:'response-file',name:'fictional.txt',base64:Buffer.from('test').toString('base64'),visibility:'Internal'};
+ const first=await f.post('files',payload,observer);assert.equal(first.status,201);const file=await first.json();
+ assert.equal((await (await f.post('files',payload,observer)).json()).id,file.id);
+ const list=async()=>(await (await fetch(f.base+'/api/platform/files?entity=response-file',{headers:{cookie:pm.cookie}})).json()).files;
+ assert.equal((await list()).length,0);
+ f.store.change(s=>{const r=s.records.find(r=>r.id==='response-file');r.version++;r.status='Submitted';r.inspection={actor:'pm',at:new Date().toISOString(),reason:'Scoped test'};});
+ assert.equal((await list()).length,1);
+ const policy=f.store.readState().records.find(r=>r.type==='policy');
+ assert.equal((await f.post('files',{...payload,entity:policy.id},observer)).status,403);
+});

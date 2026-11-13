@@ -15,10 +15,10 @@ export function operationsRows(ctx) {
       const due=deadlines[status];
       const manager=ctx.s.users.find(u=>u.id===(r?.actingReviewer || member.managerId));
       const closed=status==='Closed',exception=status==='Approved exception';
-      rows.push({cycle:cycle.title,frequency:cycle.frequency||'Quarterly',period_start:cycle.start,period_end:cycle.end,scoring_version:cycle.scoringVersion||'Legacy',company:member.company,department:member.department,manager:manager?.name || 'Unassigned',
+      rows.push({review_id:r?.id??null,cycle:cycle.title,frequency:cycle.frequency||'Quarterly',period_start:cycle.start,period_end:cycle.end,scoring_version:cycle.scoringVersion||'Legacy',company:member.company,department:member.department,manager:manager?.name || 'Unassigned',
         staff_id:member.staffId,employee:member.name,status,baseline:!!r?.baseline,midpoint:!!r?.checkIns.some(c=>c.kind==='Mid-quarter checkpoint'),
         self_review:r?.selfReview?'Submitted':r?.selfBypass?'Expired':'Pending',supervisor_scored:r?.supervisorScore!=null,
-        calibrated:r?.calibratedScore!=null,released:!!r?.releasedAt,conversation:!!r?.conversation,acknowledged:!!r?.ack,
+        calibrated:r?.calibratedScore!=null||!!r?.cohortCalibration,released:!!r?.releasedAt,conversation:!!r?.conversation,acknowledged:!!r?.ack,
         completed:closed,resolved:closed||exception,approved_exception:exception,due:due || '',
         overdue:!!due&&due<isoDay(ctx.at),diagnostic:!r?'Missing appraisal':!manager||manager.active===false?'Missing or inactive reviewer':
           r.selfBypass&&!r.selfReview?'Self-review expired':r.goalFeedback&&!r.baseline?'KPI corrections requested':''});

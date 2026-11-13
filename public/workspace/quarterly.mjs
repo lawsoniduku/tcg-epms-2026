@@ -134,7 +134,7 @@ export const reviewActions=[
     note('reason','Adjustment comment',{optional:true}),note('employeeExplanation','Explanation for employee on release',{optional:true}),field('evidence','Evidence reference','text',{optional:true})
   ],(ctx,r,v)=>lockReview(ctx,r,v)),
   action('review.reopen','Reopen final score',(ctx,r)=>pm(ctx)&&!own(ctx.actor,r)&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status),()=>[note('reason','Reason for correction'),field('approval','Authorisation reference')],(ctx,r,v)=>{
-    const c=cycle(ctx,r);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{reason:v.reason});}r.reopen={...v,by:ctx.actor.id,at:ctx.at};r.status='Calibration';r.panel=null;r.releasedAt=null;r.ack=null;r.conversation=null;return r;
+    const c=cycle(ctx,r);if(c.status==='Closed'){c.status='Open';journal(ctx,c,'cycle.reopen',{reason:v.reason});}r.reopen={...v,by:ctx.actor.id,at:ctx.at};r.status='Calibration';r.panel=null;r.calibratedScore=null;r.cohortCalibration=null;r.feedbackReviewed=null;r.feedbackThemes=null;r.moderation=null;r.releasedAt=null;r.ack=null;r.conversation=null;return r;
   }),
   action('review.release','Release result to employee',atStage('Locked',pm),noFields,(ctx,r)=>{if(r.assessment?.behaviour.source==='360 feedback')need(r.feedbackReviewed,'Review feedback for release first.');r.status='Released';r.releasedAt=ctx.at;
     const rating=r.revisions.at(-1).finalRating;

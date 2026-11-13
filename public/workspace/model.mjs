@@ -86,15 +86,25 @@ export function csv(text) {
   return rows.map((r,i)=>{need(r.length===header.length,'CSV column mismatch at row '+(i+2));return Object.fromEntries(header.map((k,j)=>[k,r[j]]));});
 }
 export function emptyState() {return {schema:2,revision:0,records:[],users:[],events:[],outbox:[]};}
-export const list = (s,type) => s.records.filter(r=>r.type===type);
+// Per-projection indexes never outlive a read or enter mutable workflow state.
+export function indexedProjection(s){
+  const byType=new Map(),byId=new Map();
+  for(const r of s.records){
+    byId.set(r.id,r);
+    if(!byType.has(r.type))byType.set(r.type,[]);
+    byType.get(r.type).push(r);
+  }
+  return {...s,byType,byId};
+}
+export const list = (s,type) => s.byType?(s.byType.get(type)??[]):s.records.filter(r=>r.type===type);
 export function get(s,id,type) {
-  const r=s.records.find(r=>r.id===id && (!type||r.type===type));need(r,'The referenced record is unavailable.');return r;
+  const r=s.byId?s.byId.get(id):s.records.find(r=>r.id===id);need(r&&(!type||r.type===type),'The referenced record is unavailable.');return r;
 }
 export function create(ctx,type,title,status,data={}) {
   const record={id:crypto.randomUUID(),type,title,status,version:0,createdAt:ctx.at,createdBy:ctx.actor.id,company:ctx.actor.company||undefined,...data};
   ctx.s.records.push(record);return record;
 }
-export const person = (s,r) => r?.type==='employee'?r:s.records.find(e=>e.type==='employee'&&e.id===r?.employeeId);
+export const person = (s,r) => r?.type==='employee'?r:(s.byId?s.byId.get(r?.employeeId):s.records.find(e=>e.type==='employee'&&e.id===r?.employeeId));
 export const own = (u,r) => !!u.employeeId && u.employeeId===(r?.employeeId??r?.id);
 export function manages(s,u,r) {const e=r?.snapshot??person(s,r);return !!e&&u.role==='manager'&&(r?.actingReviewer??e.managerId)===u.id&&!own(u,r);}
 export function heads(s,u,r) {const e=r?.snapshot??person(s,r);return !!e&&u.role==='hod'&&u.department===e.department&&!own(u,r);}
@@ -120,6 +130,17 @@ export function scope(s,u,r) {
   if(r.type==='commercial')return own(u,r)||manages(s,u,r)||heads(s,u,r)||isRole(u,'sales','finance','pm','executive','auditor');
   if(r.type==='employee'&&isRole(u,'admin','sales','finance','talent','er'))return true;
   return own(u,r)||manages(s,u,r)||heads(s,u,r)||isRole(u,'pm','executive','auditor')||(r.type==='probation'&&u.role==='er');
+}
+export function confidentialRead(actor,response,at){
+  const elapsed=Date.parse(at)-Date.parse(response.inspection?.at);
+  return isRole(actor,'pm')&&!own(actor,response)&&response.feedbackAdmins?.includes(actor.id)&&response.inspection?.actor===actor.id&&elapsed>=0&&elapsed<300000;
+}
+export function canAttach(s,actor,r){
+  if(!scope(s,actor,r)||['Closed','Locked','Released','Acknowledged','Conversation recorded','Approved','Published','Reconciled','Exported','Approved exception'].includes(r.status))return false;
+  if(r.type==='response')return actor.id===r.rater&&['Invited','In progress'].includes(r.status);
+  if(!['review','commercial','probation','appeal','capability'].includes(r.type))return false;
+  if(own(actor,r))return r.type==='review'?['Goal setting','Self-review','In progress'].includes(r.status):['appeal','capability'].includes(r.type);
+  return isRole(actor,'pm')||manages(s,actor,r)||heads(s,actor,r)||r.type==='commercial'&&isRole(actor,'sales','finance')||['appeal','probation','capability'].includes(r.type)&&isRole(actor,'er');
 }
 export const choices=(records,label=r=>r.title)=>records.map(r=>option(r.id,label(r)));
 export const route = e => !e.confirmed?'C':e.commercial?'B':'A';

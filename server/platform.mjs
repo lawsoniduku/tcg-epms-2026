@@ -27,7 +27,7 @@ if(provision){
   }
   const server=platformHttp(store,options);const port=Number(arg('--port')||process.env.PORT||3000),host=arg('--host')||process.env.HOST||'127.0.0.1';
   server.listen(port,host,()=>console.log('TCG PMS listening on '+host+':'+port+' ('+(demo?'acceptance':'live')+')'));
-  const tick=setInterval(()=>{try{store.change(s=>processDeadlines(s));}catch(e){console.error('Deadline processing failed:',e.name);}},60000);tick.unref();
+  const tick=setInterval(()=>{try{store.deadlines(processDeadlines);}catch(e){console.error('Deadline processing failed:',e.name);}},60000);tick.unref();
   for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(tick);server.close(()=>{store.close();process.exit(0);});});
 }
 

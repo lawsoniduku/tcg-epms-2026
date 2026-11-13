@@ -82,10 +82,14 @@ test('employee appeal requires independent reviewer and preserves the previously
 test('budgeted merit uses closed numeric results, dual governance, uniform scaling and a single reconciled export',()=>{
  const j=journey(),e=list(j.s,'employee')[0],r=j.act('finance','merit','merit.new',{title:'2025 annual',frequency:'Annual',start:'2025-01-01',authority:'Approved matrix',pool:50000,reference:6,cap:12,factor3:1,factor4:1.3,factor5:1.75,salesMap:'',cpiStart:100,cpiEnd:112,cpiSource:'Synthetic Jan–Dec indices'});
  j.act('finance','payBasis','payBasis.new',{employeeId:e.id,annual:1000000,grade:'Approved band',effective:'2025-12-31',source:'Certified payroll'});
+ j.act('finance','payBasis','payBasis.new',{employeeId:e.id,annual:1500000,grade:'Next band',effective:'2026-01-01',source:'Next period'});
  j.doIt('finance',r,'line',{employeeId:e.id,salary:1000000,position:1,paySource:'Certified payroll',eligibility:'Eligible'});assert.equal(r.lines[0].proposedKobo,7800000);
  assert.throws(()=>j.doIt('finance',r,'submit',{normalise:'No',budget:'Over cap'}),/scaling/);
  j.doIt('finance',r,'submit',{normalise:'Yes',budget:'Approved proportional scaling'});assert.equal(r.costKobo,5000000);
- assert.throws(()=>exportData(j.s,j.user('finance'),'payroll',r.id),/approved/);j.doIt('pm',r,'equity',{findings:'Checked',decision:'Approve for executive review'});j.doIt('executive',r,'authorise',{authority:'E',effective:'2026-01-01',decision:'Approve'});assert.throws(()=>j.doIt('finance',r,'export',{reference:'Same maker'}),/allow/);j.doIt('finance-check',r,'export',{reference:'Finance'});assert.match(exportData(j.s,j.user('finance'),'payroll',r.id),/50000/);
+ assert.throws(()=>exportData(j.s,j.user('finance'),'payroll',r.id),/approved/);j.doIt('pm',r,'equity',{findings:'Checked',decision:'Approve for executive review'});j.doIt('executive',r,'authorise',{authority:'E',effective:'2026-01-01',decision:'Approve'});assert.throws(()=>j.doIt('finance',r,'export',{reference:'Same maker'}),/allow/);j.user('finance-check').employeeId=e.id;
+ assert.throws(()=>j.doIt('finance-check',r,'export',{reference:'Own award'}),/allow/);
+ delete j.user('finance-check').employeeId;
+ j.doIt('finance-check',r,'export',{reference:'Finance'});assert.match(exportData(j.s,j.user('finance'),'payroll',r.id),/50000/);
  j.doIt('finance',r,'ack',{reference:'Payroll acknowledgement',cost:50000});assert.equal(r.status,'Reconciled');assert.throws(()=>view(j.s,j.user('employee'),{id:r.id}),/scope/);
 });
 test('capability case requires support, ER and HOD approval, checkpoints and a hearing before an employment decision',()=>{
@@ -238,4 +242,18 @@ test('v4.2 UAT-FIN-04/05: unchanged supervisor base locks after cohort signoff; 
  assert.throws(()=>j.doIt('pm',r,'lock',{deduction:.5,reason:'  '}),/reason/);
  j.doIt('pm',r,'lock',{deduction:.5,reason:'Authorised case adjustment'});
  assert.equal(r.revisions.at(-1).finalScore,1);assert.equal(r.revisions.at(-1).deductionPoints,.5);
+});
+
+test('reopened cohort retains supervisor basis and requires fresh feedback clearance',()=>{
+ const j=journey(),r=list(j.s,'review').find(r=>r.status==='Closed'),c=j.s.records.find(c=>c.id===r.cycleId);
+ r.calibratedScore=3.85;r.supervisorScore=3.2;r.feedbackReviewed={by:'pm'};r.feedbackThemes={strengths:'Old'};
+ j.doIt('pm',r,'reopen',{reason:'Reassessment',approval:'approved'});
+ assert.equal(r.feedbackReviewed,null);
+ j.doIt('pm',c,'completeCalibration',{reference:'New cohort'});
+ j.doIt('pm',r,'lock');assert.equal(r.revisions.at(-1).finalScore,3.2);
+ const projected=view(j.s,j.user('pm')).operations.find(o=>o.cycle===c.title&&o.staff_id===r.snapshot.staffId);
+ assert.equal(projected.calibrated,true);
+ const csv=exportData(j.s,j.user('pm'),'scores',null,{cycle:c.title});
+ assert.ok(csv.includes(c.title));assert.equal(csv.includes('2025 Q4'),false);
+ assert.throws(()=>exportData(j.s,j.user('pm'),'typo'),/Unknown report/);
 });

@@ -4,7 +4,7 @@ import {trackAt} from './governance.mjs';
 import {action,activePolicy,addMonths,addWorkdays,anyRole,choices,create,csv,dateValue,field,get,heads,isRole,isoDay,journal,list,need,noFields,note,notify,num,option,perspectives,pick,readFields,route,ratingFor,yes} from './model.mjs';
 
 const allStaff = s => list(s,'employee').filter(e=>e.active);
-const managers = ctx => ctx.s.users.filter(u=>u.active!==false&&u.role==='manager').map(u=>option(u.id,u.name));
+const managers = ctx => ctx.s.users.filter(u=>u.active!==false&&(u.role==='manager'||u.additionalRoles?.includes('manager'))&&(!ctx.actor.company||!u.company||u.company===ctx.actor.company)).map(u=>option(u.id,u.name));
 export const staffFields = ctx => [
   field('staffId','Staff ID'),field('name','Full name'),field('email','Work email'),field('company','Company'),
   field('department','Department'),field('jobTitle','Job title'),pick('managerId','Line manager',managers(ctx)),
@@ -13,6 +13,8 @@ export const staffFields = ctx => [
 ];
 function upsert(ctx,values) {
   need(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email),'Enter a valid work email.');
+  const manager=ctx.s.users.find(u=>u.id===values.managerId);
+  need(manager&&(!manager.company||manager.company===values.company),'Line manager is outside the employee company.');
   need(!ctx.actor.company||values.company===ctx.actor.company,'Employee is outside your company scope.');
   const duplicate=list(ctx.s,'employee').find(e=>e.email.toLowerCase()===values.email.toLowerCase()&&e.staffId!==values.staffId);
   need(!duplicate,'This email belongs to another staff ID.');
@@ -145,6 +147,7 @@ export const cycleActions=[
     need(reviews.length,'There are no submitted appraisals awaiting calibration.');
     for(const review of reviews){
       if(review.panel || [1,2,5].includes(ratingFor(review.supervisorScore)))continue;
+      review.calibratedScore=null;
       review.cohortCalibration={reference:v.reference,by:ctx.actor.id,at:ctx.at};
       review.status='Finalisation';journal(ctx,review,'review.cohortCalibration');
     }
