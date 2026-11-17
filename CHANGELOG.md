@@ -33,3 +33,13 @@ Use Download appraisal report (.xlsx) on Review management, the cycle detail, or
 ## Manager tasks and confirmation
 
 My tasks and Home read the same role-scoped queue derived from the current workflow stage. A submitted self-review hands supervisor assessment to the assigned reviewer. Continue opens the appropriate record and form. Completed work drops out as the stage advances. Historical reminders have their own Notifications destination. The confirmation directory shows the next step, owner and relevant date. Each confirmation plan displays its milestones and current action. A manager can start a missing confirmation plan directly from My tasks.
+
+## Whole-percentage appraisal and productivity entitlement
+
+Approved by the product owner on 17 November 2026. Final Track A appraisal percentage equals the final 1–5 score multiplied by 20, rounded once to a whole number using HALF_UP after calibration and authorised deductions. Percentages below 60 unlock 0%; 60–70 unlock 50%; 71–90 unlock 75%; 91–100 unlock 100%.
+
+New finalisation revisions retain the exact score fraction and rule identifier. When calibration supplies a replacement score, that decision is the calculation basis. Otherwise the unrounded BSC/360 composite is retained through finalisation. Existing 1–5 ratings, deduction units and merit eligibility remain governed by the existing policy. Historical revisions display a percentage derived from their stored score, with no retrospective productivity entitlement.
+
+Review detail, released employee views, CSV score exports and cycle XLSX reports expose the percentage and unlock within existing access rules. An unlock is the proportion of an eligible productivity opportunity; cash opportunity, payroll certification and payment execution are still separate workflows. This change does not configure the TAE recruitment-specific KPI anchors or change commercial/confirmation rules.
+
+Verification includes HALF_UP and payout boundaries, deductions before rounding, precise composite regression, employee release privacy and existing approval journeys.

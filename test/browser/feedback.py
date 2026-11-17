@@ -111,6 +111,8 @@ try:
             act('pm','review',rid,'release')
             employee = page_for('employee')
             employee.goto(f'{base}/?released={rid}#review/{rid}')
+            expect(employee.locator('.score-box').filter(has_text='Final appraisal')).to_contain_text('80%')
+            expect(employee.locator('.score-box').filter(has_text='Productivity unlocked')).to_contain_text('75%')
             expect(employee.get_by_text('Colleagues observed effective collaboration',exact=True)).to_have_count(1)
             expect(employee.get_by_text('Private example from observer',exact=True)).to_have_count(0)
             act('manager','review',rid,'conversation',dict(discussion='Discussed feedback together',owner='Manager',due='2099-06-01'))

@@ -50,3 +50,13 @@ This register maps the original release audit IDs to the implementation shipped 
 Corporate identity, payroll, notification delivery, backup restoration, assistive technology and representative load require acceptance in the target environment. Retain results with the release ticket.
 
 For the subsequent four-phase upgrade and the disposition of hosted-only findings, see [the change register](../../CHANGELOG.md).
+
+## Whole-percentage appraisal and productivity entitlement
+
+Approved by the product owner on 17 November 2026. Final Track A appraisal percentage equals the final 1–5 score multiplied by 20, rounded once to a whole number using HALF_UP after calibration and authorised deductions. Percentages below 60 unlock 0%; 60–70 unlock 50%; 71–90 unlock 75%; 91–100 unlock 100%.
+
+New finalisation revisions retain the exact score fraction and rule identifier. When calibration supplies a replacement score, that decision is the calculation basis. Otherwise the unrounded BSC/360 composite is retained through finalisation. Existing 1–5 ratings, deduction units and merit eligibility remain governed by the existing policy. Historical revisions display a percentage derived from their stored score, with no retrospective productivity entitlement.
+
+Review detail, released employee views, CSV score exports and cycle XLSX reports expose the percentage and unlock within existing access rules. An unlock is the proportion of an eligible productivity opportunity; cash opportunity, payroll certification and payment execution are still separate workflows. This change does not configure the TAE recruitment-specific KPI anchors or change commercial/confirmation rules.
+
+Verification includes HALF_UP and payout boundaries, deductions before rounding, precise composite regression, employee release privacy and existing approval journeys.

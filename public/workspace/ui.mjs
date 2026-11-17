@@ -180,8 +180,12 @@ function listing(){const rows=state.rows[section];return heading(navLabel(sectio
 function scorePanel(r){
  if(r.type!=='review')return '';
  const d=r.data, final=d.finalScore??d.revisions?.at(-1)?.finalScore;
+ const revision=d.revisions?.at(-1),percentage=d.finalPercentage??revision?.finalPercentage??(typeof final==='number'?Math.floor((Math.round(final*100)+2)/5):undefined);
+ const unlock=d.productivityUnlockPercent??revision?.productivityUnlockPercent;
  const data=state.actor.role==='employee'?[['Released score',final]]:[['BSC · '+(d.componentWeights?.bsc??70)+'%',d.assessment?.bsc],['360 / behaviour · '+(d.componentWeights?.feedback??30)+'%',d.assessment?.behaviour?.score],['Composite · 100%',d.supervisorScore],['Supervisor submission',d.supervisorScore],['Calibrated',d.calibratedScore],['Final after deduction',final]];
- return '<div class="score-comparison">'+data.map(([k,v])=>'<div class="score-box"><label>'+k+'</label><strong>'+(typeof v==='number'?v.toFixed(2):'—')+'</strong></div>').join('')+'</div>';
+ data.unshift(['Final appraisal',typeof percentage==='number'?percentage+'%':undefined]);
+ if(typeof unlock==='number')data.push(['Productivity unlocked',unlock+'%']);
+ return '<div class="score-comparison">'+data.map(([k,v])=>'<div class="score-box"><label>'+k+'</label><strong>'+(typeof v==='number'?v.toFixed(2):escape(v??'—'))+'</strong></div>').join('')+'</div>';
 }
 function evidencePanel(r){if(!info.evidence)return '';const writable=r.canAttach;return '<section class="panel"><div class="panel-head"><h2>Evidence files</h2></div><div class="panel-body">'+files.map(f=>'<p>'+escape(f.name)+' · '+escape(f.scan)+(f.scan==='Clean'?' · <a aria-label="Download '+escape(f.name)+'" href="/api/platform/files?download='+encodeURIComponent(f.id)+'">Download</a>':'')+'</p>').join('')+(writable?'<form id="attach"><div class="field"><label for="evidence-file">PDF, image or text file (up to 2 MiB)</label><input type="file" id="evidence-file" name="upload" accept=".pdf,.png,.jpg,.jpeg,.txt" required></div><div class="field"><label for="file-scope">Visibility</label><select name="visibility" id="file-scope"><option>Internal</option><option>Employee shared</option></select></div><p class="form-error" role="alert"></p><button class="button secondary" type="submit">Upload for scanning</button></form>':'')+'</div></section>';}
 function reviewTables(r){
@@ -192,7 +196,7 @@ function reviewTables(r){
  table('KPI results',[['KPI','title'],['Actual','actual'],['Achievement (%)','achievement'],['Rating','rating'],['Evidence','evidence']],d.assessment?.items),
  table('360 competencies',[['Competency','competency'],['Mean','score']],d.feedback?.competencies??d.assessment?.behaviour?.competencies),
  table('Calibration',[['Panel score','score'],['Reason','reason'],['Recorded by','person'],['Time (Lagos)','time']],d.calibrations?.map(c=>({...c,person:r.people?.[c.by],time:c.at&&fmtDate(c.at)}))),
- table('Score revisions',[['Revision','revision'],['Supervisor','supervisor'],['Calibrated','calibrated'],['Deduction','deductionPoints'],['Final','finalScore'],['Recorded by','person']],d.revisions?.map(c=>({...c,person:r.people?.[c.by]})))];
+ table('Score revisions',[['Revision','revision'],['Supervisor','supervisor'],['Calibrated','calibrated'],['Deduction','deductionPoints'],['Final (1–5)','finalScore'],['Final (%)','finalPercentage'],['Productivity unlocked (%)','productivityUnlockPercent'],['Recorded by','person']],d.revisions?.map(c=>({...c,person:r.people?.[c.by]})))];
  const extra=Object.fromEntries(Object.entries(d).filter(([k])=>!['goals','assessment','calibrations','revisions','supervisorScore','calibratedScore','finalScore','checkIns','baseline','panel','campaign'].includes(k)));
  if(extra.feedback)extra.feedback=Object.fromEntries(Object.entries(extra.feedback).filter(([k])=>k!=='competencies'));
  const checks=table('Check-ins',[['Type','kind'],['Progress','progress'],['Support','support'],['Follow-up','due']],d.checkIns);

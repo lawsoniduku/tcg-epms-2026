@@ -47,9 +47,9 @@ test('Track A from authored KPIs and 360 observations through independent calibr
  j.doIt('hod',r,'calibrate',{score:4.55,reason:'Additional verified evidence',evidence:'E1',members:'Panel',consequential:'Yes'});
  assert.throws(()=>j.doIt('pm',r,'lock',{}),/allow/);
  j.doIt('executive',r,'moderate',{reason:'Panel evidence confirmed',evidence:'E2'});j.doIt('pm',r,'lock',{reason:'',evidence:''});
- assert.equal(view(j.s,j.user('employee'),{id:r.id}).detail.data.finalScore,undefined);
+ assert.equal(view(j.s,j.user('employee'),{id:r.id}).detail.data.finalScore,undefined);assert.equal(view(j.s,j.user('employee'),{id:r.id}).detail.data.productivityUnlockPercent,undefined);
  assert.throws(()=>j.doIt('pm',r,'release'),/feedback/);j.doIt('pm',r,'feedbackThemes',{strengths:'Supports cross-team delivery',check:'Reviewed and safe to release'});
- j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.feedback.strengths,'Supports cross-team delivery');assert.equal(employeeView.data.calibrations,undefined);
+ j.doIt('pm',r,'release');let employeeView=view(j.s,j.user('employee'),{id:r.id}).detail;assert.equal(employeeView.data.finalScore,4.55);assert.equal(employeeView.data.finalPercentage,91);assert.equal(employeeView.data.productivityUnlockPercent,100);assert.equal(employeeView.data.feedback.strengths,'Supports cross-team delivery');assert.equal(employeeView.data.calibrations,undefined);
  j.doIt('manager',r,'conversation',{discussion:'Reviewed contribution',owner:'Manager',due:'2027-05-01'});j.doIt('employee',r,'ack',{comment:'Received'});j.doIt('pm',r,'close',{development:'Coaching plan'});assert.equal(r.status,'Closed');
  assert.match(exportData(j.s,j.user('auditor'),'scores'),/4\.55/);
 });

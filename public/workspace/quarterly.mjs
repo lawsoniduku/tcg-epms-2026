@@ -1,3 +1,4 @@
+import {productivityResult} from './productivity.mjs';
 import {weighted,percent} from './decimal.mjs';
 import {feedbackActions,redactThemes} from './feedback.mjs';
 import {effectiveGoals} from './governance.mjs';
@@ -127,6 +128,7 @@ export const reviewActions=[
     const bsc=weighted(items.map(g=>g.rating),items.map(g=>g.weight));
     const behaviour=behaviourResult(ctx,r);
     r.assessment={items,bsc,behaviour,summary:v.summary,by:ctx.actor.id,at:ctx.at};
+    r.assessment.exactComposite=behaviour.units?compositeFraction(items,behaviour,r.componentWeights):null;
     r.supervisorScore=cycle(ctx,r).scoringVersion==='4.2'?compositeScore(items,behaviour,r.componentWeights):trackAScore(bsc,behaviour.score);r.status='Calibration';return r;
   }),
   action('review.calibrate','Record calibration decision',atStage('Calibration',(ctx,r)=>r.panel?.chair===ctx.actor.id&&!own(ctx.actor,r)),()=>[
@@ -159,14 +161,21 @@ export function lockReview(ctx,r,v){
   need(r.status==='Finalisation','Only records ready for finalisation may be locked.');need(pm(ctx)&&!own(ctx.actor,r),'PM finalisation authority is required.');
   const p=policy(ctx,r),modern=cycle(ctx,r).scoringVersion==='4.2', adjustment={mode:p.allowDeduction==='Yes'?'controlled':'disabled',approvalReference:p.approval?.reference,approvedBy:p.approval?.by,tracks:['A'],maxPoints:p.deductionCap,floor:p.deductionFloor,manualPoints:modern,evidenceRequired:!modern};
   const result=finalisationPreview({track:'A',status:'ready',supervisorScore:r.supervisorScore,calibratedScore:r.calibratedScore,calibrationComplete:true,version:r.version},{expectedVersion:r.version,deductionPoints:v.deduction||0,reason:v.reason,evidence:v.evidence,basis:p.deductionBasis},adjustment);
-  r.revisions.push({...result,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,employeeExplanation:v.employeeExplanation||'',revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
+  const score=r.calibratedScore!=null?{numerator:String(scoreValue(r.calibratedScore)),denominator:'100'}:
+    r.assessment?.exactComposite??{numerator:String(scoreValue(r.supervisorScore)),denominator:'100'};
+  const productivity=productivityResult(score,result.deductionPoints);
+  r.revisions.push({...result,...productivity,supervisor:r.supervisorScore,calibrated:r.calibratedScore,reason:v.reason,evidence:v.evidence,employeeExplanation:v.employeeExplanation||'',revision:r.revisions.length+1,by:ctx.actor.id,at:ctx.at,policyId:p.id});r.status='Locked';return r;
 }
 export const responseActions=feedbackActions;
-export function compositeScore(items,behaviour,weights={bsc:70,feedback:30}){
+function compositeFraction(items,behaviour,weights={bsc:70,feedback:30}){
   const bscUnits=items.reduce((sum,item)=>sum+Math.round(item.rating*100)*Math.round(item.weight*100),0);
   const denominator=1000000n*BigInt(behaviour.divisor);
   const numerator=BigInt(bscUnits)*BigInt(weights.bsc)*BigInt(behaviour.divisor)+BigInt(behaviour.units)*BigInt(weights.feedback)*1000000n;
-  return Number((2n*numerator+denominator)/(2n*denominator))/100;
+  return {numerator:String(numerator),denominator:String(denominator*100n)};
+}
+export function compositeScore(items,behaviour,weights){
+  const exact=compositeFraction(items,behaviour,weights),n=BigInt(exact.numerator),d=BigInt(exact.denominator);
+  return Number((200n*n+d)/(2n*d))/100;
 }
 export function behaviourResult(ctx,r) {
   const c=cycle(ctx,r),p=c.policy;

@@ -15,8 +15,18 @@ The 5 November build passed 49 automated tests and JavaScript syntax checks with
 
 ## Standalone engineering candidate, 13 November
 
-The current standalone suite has 62 Node tests. The count excludes tests retired with the legacy server and hosted adapter. The current Chromium suites run the quarterly and half-year journeys, exercise role navigation and check seven screens at 390, 768 and 1440 pixels. The browser checks assert page width and horizontal access to the selected primary control. The engineering archive includes the screenshots. Manual screen-reader, corporate identity, representative load and disaster-recovery acceptance belong in staging.
+The current standalone suite has 65 Node tests. The count excludes tests retired with the legacy server and hosted adapter. The current Chromium suites run the quarterly and half-year journeys, exercise role navigation and check seven screens at 390, 768 and 1440 pixels. The browser checks assert page width and horizontal access to the selected primary control. The engineering archive includes the screenshots. Manual screen-reader, corporate identity, representative load and disaster-recovery acceptance belong in staging.
 
 ## Suggested TCG acceptance session
 
 Begin with a blank staging installation and TCG-approved fixtures. Run the entire quarterly journey for an IC and people manager, include a qualifying and suppressed cohort, test delegated reviewers and sanctioned score correction, reconcile monthly sales/confirmation and validate benefit/payroll amounts with Finance. Repeat the adverse-case scenarios with ER, validate access with Security, and rehearse recovery with IT. Only the quarterly journey above was manually run in this browser session. The other automated journeys still require business-owner browser UAT.
+
+## Whole-percentage appraisal and productivity entitlement
+
+Approved by the product owner on 17 November 2026. Final Track A appraisal percentage equals the final 1–5 score multiplied by 20, rounded once to a whole number using HALF_UP after calibration and authorised deductions. Percentages below 60 unlock 0%; 60–70 unlock 50%; 71–90 unlock 75%; 91–100 unlock 100%.
+
+New finalisation revisions retain the exact score fraction and rule identifier. When calibration supplies a replacement score, that decision is the calculation basis. Otherwise the unrounded BSC/360 composite is retained through finalisation. Existing 1–5 ratings, deduction units and merit eligibility remain governed by the existing policy. Historical revisions display a percentage derived from their stored score, with no retrospective productivity entitlement.
+
+Review detail, released employee views, CSV score exports and cycle XLSX reports expose the percentage and unlock within existing access rules. An unlock is the proportion of an eligible productivity opportunity; cash opportunity, payroll certification and payment execution are still separate workflows. This change does not configure the TAE recruitment-specific KPI anchors or change commercial/confirmation rules.
+
+Verification includes HALF_UP and payout boundaries, deductions before rounding, precise composite regression, employee release privacy and existing approval journeys.

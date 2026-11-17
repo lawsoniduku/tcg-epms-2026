@@ -1,3 +1,4 @@
+import {percentageFor} from './productivity.mjs';
 import {nextTask,confirmationStep,nominationTask} from './work-queue.mjs';
 import {questionsFor,defaultWeights} from './review-design.mjs';
 import {importGoals} from './goal-import.mjs';
@@ -95,7 +96,7 @@ function displayRecord(ctx,r){
   }
   if(r.type==='review'&&own(ctx.actor,r)){
     const data={cycleId:r.cycleId,goals:r.goals,checkIns:r.checkIns,selfReview:r.selfReview,goalFeedback:r.goalFeedback};
-    if(r.releasedAt)Object.assign(data,{finalScore:r.revisions.at(-1).finalScore,rating:r.revisions.at(-1).finalRating,explanation:r.revisions.at(-1).employeeExplanation||undefined,conversation:r.conversation,development:r.development,receipt:r.ack});
+    if(r.releasedAt)Object.assign(data,{finalScore:r.revisions.at(-1).finalScore,finalPercentage:percentageFor(r.revisions.at(-1)),productivityUnlockPercent:r.revisions.at(-1).productivityUnlockPercent,rating:r.revisions.at(-1).finalRating,explanation:r.revisions.at(-1).employeeExplanation||undefined,conversation:r.conversation,development:r.development,receipt:r.ack});
     if(r.releasedAt && r.assessment?.behaviour.source==='360 feedback'){
       data.feedback = {score:Math.round(r.assessment.behaviour.score*100)/100,periodStart:r.campaign?.start,periodEnd:r.campaign?.end,competencies:r.assessment.behaviour.competencies,strengths:r.feedbackThemes?.strengths,development:r.feedbackThemes?.development};
     }
@@ -245,7 +246,7 @@ export function exportData(s,actor,report,id,filters={}){
   }else if(report==='scores'){
     requireThat(isRole(actor,'pm','executive','auditor'),'Score reporting authority is required.',403);
     const members=new Set(operationsRows(ctx).filter(matches).map(row=>row.review_id));
-    for(const r of permittedRecords(ctx,'review').filter(r=>members.has(r.id)))for(const v of r.revisions)rows.push({staff_id:r.snapshot.staffId,employee:r.snapshot.name,cycle:get(s,r.cycleId).title,revision:v.revision,supervisor:v.supervisor,calibrated:v.calibrated,deduction:v.deductionPoints,final:v.finalScore,rating:v.finalRating,reason:v.reason,by:v.by,at:v.at,status:r.status,current:r.revisions.at(-1)===v&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status)});
+    for(const r of permittedRecords(ctx,'review').filter(r=>members.has(r.id)))for(const v of r.revisions)rows.push({staff_id:r.snapshot.staffId,employee:r.snapshot.name,cycle:get(s,r.cycleId).title,revision:v.revision,supervisor:v.supervisor,calibrated:v.calibrated,deduction:v.deductionPoints,final:v.finalScore,final_percentage:percentageFor(v),productivity_unlock_percent:v.productivityUnlockPercent??'',rating:v.finalRating,reason:v.reason,by:v.by,at:v.at,status:r.status,current:r.revisions.at(-1)===v&&['Locked','Released','Conversation recorded','Acknowledged','Closed'].includes(r.status)});
   }else{
     requireThat(isRole(actor,'pm','hod','manager','executive','auditor'),'Management reporting authority is required.',403);
     rows.push(...operationsRows(ctx).filter(matches));
