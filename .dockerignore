@@ -1,0 +1,9 @@
+.git
+data
+build
+dist
+hosting
+.env*
+node_modules
+*.key
+*.sqlite*
